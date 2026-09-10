@@ -1,0 +1,2798 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+
+function UploadIcon({ className }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
+      />
+    </svg>
+  )
+}
+
+function VideoThumb({
+  video,
+  selected,
+  removeMode,
+  marked,
+  onSelect,
+  onToggleRemove,
+}) {
+  return (
+    <div className="flex w-40 shrink-0 flex-col">
+      <div className="relative">
+        <button
+          type="button"
+          onClick={removeMode ? onToggleRemove : onSelect}
+          className={`group relative w-full overflow-hidden rounded-xl shadow transition hover:shadow-lg ${
+            selected
+              ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-white'
+              : ''
+          } ${marked ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-white' : ''}`}
+        >
+          {video.thumbnail_url ? (
+            <img
+              src={`/api${video.thumbnail_url}`}
+              alt=""
+              className="aspect-video w-full object-cover transition duration-150 group-hover:scale-105"
+            />
+          ) : (
+            <div className="flex aspect-video w-full items-center justify-center bg-slate-200 text-xs text-slate-500">
+              No thumbnail
+            </div>
+          )}
+          {removeMode ? (
+            <div className={`absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full border-2 ${marked ? 'border-red-500 bg-red-500 text-white' : 'border-white bg-white/50 text-transparent'}`}>
+              ✓
+            </div>
+          ) : video.batch_count > 0 ? (
+            <div
+              title={`${video.batch_count} batch${video.batch_count === 1 ? '' : 'es'}`}
+              className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-sm font-bold text-white shadow"
+            >
+              ✓
+            </div>
+          ) : null}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function ArrowIcon({ className, direction }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d={
+          direction === 'left'
+            ? 'M15.75 19.5 8.25 12l7.5-7.5'
+            : 'M8.25 4.5 15.75 12l-7.5 7.5'
+        }
+      />
+    </svg>
+  )
+}
+
+function Filmstrip({ images, index, marked, onSelect }) {
+  const stripRef = useRef(null)
+
+  useEffect(() => {
+    const el = stripRef.current?.querySelector('[data-active="true"]')
+    el?.scrollIntoView({ inline: 'center', block: 'nearest' })
+  }, [index])
+
+  return (
+    <div
+      ref={stripRef}
+      className="absolute left-0 right-0 top-0 z-10 flex gap-2 overflow-x-auto border-b border-white/10 bg-black/50 px-3 py-2.5 backdrop-blur-md"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {images.map((image, i) => (
+        <img
+          key={image}
+          data-active={i === index}
+          src={`/api${image}`}
+          alt=""
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect(i)
+          }}
+          className={`h-16 w-28 shrink-0 cursor-pointer rounded-md object-cover shadow-md transition duration-150 ${
+            marked?.has(image)
+              ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-black'
+              : i === index
+                ? 'ring-2 ring-white ring-offset-2 ring-offset-black'
+                : 'opacity-50 hover:opacity-90'
+          }`}
+        />
+      ))}
+    </div>
+  )
+}
+
+function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) {
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowLeft') onNavigate(-1)
+      if (e.key === 'ArrowRight') onNavigate(1)
+      if (onRemove && (e.key === 'x' || e.key === 'X')) {
+        onRemove(images[index])
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onClose, onNavigate, onRemove, images, index])
+
+  if (index === null) return null
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <Filmstrip images={images} index={index} onSelect={onSelect} />
+
+      {onRemove && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onRemove(images[index])
+          }}
+          className="absolute left-4 top-24 z-10 flex h-10 items-center justify-center gap-1.5 rounded-full border border-white/10 bg-red-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-red-500"
+        >
+          Remove
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute right-4 top-24 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/10 text-xl text-white backdrop-blur-md transition hover:bg-white/20"
+      >
+        ×
+      </button>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onNavigate(-1)
+        }}
+        className="absolute left-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white backdrop-blur-md transition hover:scale-105 hover:bg-white/20"
+      >
+        <ArrowIcon direction="left" className="h-6 w-6" />
+      </button>
+
+      <img
+        src={`/api${images[index]}`}
+        alt=""
+        className="h-[78vh] w-[90vw] rounded-lg object-contain shadow-2xl"
+      />
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onNavigate(1)
+        }}
+        className="absolute right-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white backdrop-blur-md transition hover:scale-105 hover:bg-white/20"
+      >
+        <ArrowIcon direction="right" className="h-6 w-6" />
+      </button>
+
+      <span className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-md">
+        {index + 1} / {images.length}
+      </span>
+    </div>
+  )
+}
+
+function RemoveModeModal({
+  images,
+  index,
+  marked,
+  onToggleMark,
+  onNavigate,
+  onSelect,
+  onClose,
+  onDone,
+}) {
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'ArrowLeft') onNavigate(-1)
+      if (e.key === 'ArrowRight') onNavigate(1)
+      if (e.key === ' ') {
+        e.preventDefault()
+        if (images[index]) {
+          onToggleMark(images[index])
+          onNavigate(1)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [onNavigate, onToggleMark, images, index])
+
+  const current = images[index]
+  const isMarked = current ? marked.has(current) : false
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm">
+      <Filmstrip
+        images={images}
+        index={index}
+        marked={marked}
+        onSelect={onSelect}
+      />
+
+      <div className="absolute left-4 top-24 z-10 flex items-center gap-3">
+        <span className="rounded-full border border-red-400/30 bg-red-500/20 px-4 py-1.5 text-sm font-medium text-red-200 backdrop-blur-md">
+          Remove Mode — {marked.size} marked
+        </span>
+      </div>
+
+      <div className="absolute right-4 top-24 z-10 flex gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-full border border-white/10 bg-white/10 px-5 py-2 text-sm font-medium text-white backdrop-blur-md transition hover:bg-white/20"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onDone}
+          className="rounded-full bg-red-500 px-5 py-2 text-sm font-medium text-white shadow-lg shadow-red-500/30 transition hover:bg-red-600"
+        >
+          Done
+        </button>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => onNavigate(-1)}
+        className="absolute left-4 top-1/2 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white backdrop-blur-md transition hover:scale-105 hover:bg-white/20"
+      >
+        <ArrowIcon direction="left" className="h-6 w-6" />
+      </button>
+
+      {current && (
+        <div className="relative">
+          <img
+            src={`/api${current}`}
+            alt=""
+            className={`h-[72vh] w-[85vw] rounded-lg object-contain shadow-2xl transition ${
+              isMarked ? 'ring-4 ring-red-500' : ''
+            }`}
+          />
+          {isMarked && (
+            <span className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-red-500 text-lg font-bold text-white shadow-lg">
+              ✓
+            </span>
+          )}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => onNavigate(1)}
+        className="absolute right-4 top-1/2 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white backdrop-blur-md transition hover:scale-105 hover:bg-white/20"
+      >
+        <ArrowIcon direction="right" className="h-6 w-6" />
+      </button>
+
+      <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-3">
+        <span className="rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-md">
+          {index + 1} / {images.length}
+        </span>
+        {current && (
+          <button
+            type="button"
+            onClick={() => onToggleMark(current)}
+            className={`rounded-full px-5 py-2 text-sm font-medium text-white shadow-lg transition ${
+              isMarked
+                ? 'border border-white/10 bg-white/10 backdrop-blur-md hover:bg-white/20'
+                : 'bg-red-500 shadow-red-500/30 hover:bg-red-600'
+            }`}
+          >
+            {isMarked ? 'Unmark' : 'Mark for removal'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ConfirmModal({ count, onCancel, onConfirm, title, message }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-80 rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15 text-red-400">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="h-6 w-6"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+            />
+          </svg>
+        </div>
+        <h3 className="mt-4 text-center text-base font-semibold text-white">
+          {title ?? `Delete ${count} image${count === 1 ? '' : 's'}?`}
+        </h3>
+        <p className="mt-1.5 text-center text-sm text-slate-400">
+          {message ??
+            'This will permanently remove the marked images. This action cannot be undone.'}
+        </p>
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-red-500/30 transition hover:bg-red-600"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ArchiveIcon({ className }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z"
+      />
+    </svg>
+  )
+}
+
+function App() {
+  const fileInputRef = useRef(null)
+  const tarInputRef = useRef(null)
+  const [status, setStatus] = useState(null)
+  const [videos, setVideos] = useState([])
+  const [importedImages, setImportedImages] = useState([])
+  const [frameImages, setFrameImages] = useState([])
+  const [cropImages, setCropImages] = useState([])
+  const [yoloClasses, setYoloClasses] = useState([])
+  const [batches, setBatches] = useState([])
+  const [selectedBatch, setSelectedBatch] = useState(null)
+  const [selectedFilename, setSelectedFilename] = useState(null)
+  const [videoMode, setVideoMode] = useState('frames')
+  const [videoFramesPerMinute, setVideoFramesPerMinute] = useState(30)
+  const [videoCropMargin, setVideoCropMargin] = useState(0)
+  const [videoSelectedClasses, setVideoSelectedClasses] = useState([])
+  const [videoConfidence, setVideoConfidence] = useState(70)
+  const [videoExtracting, setVideoExtracting] = useState(false)
+  const [removeVideoMode, setRemoveVideoMode] = useState(false)
+  const [selectedVideosToRemove, setSelectedVideosToRemove] = useState(new Set())
+  const [confirmingRemoveVideos, setConfirmingRemoveVideos] = useState(false)
+  const [videoToDelete, setVideoToDelete] = useState(null)
+  const [videoImages, setVideoImages] = useState([])
+  const [videoModalIndex, setVideoModalIndex] = useState(null)
+  const [removeVideoImageUrl, setRemoveVideoImageUrl] = useState(null)
+  const [confirmingRemoveVideoImage, setConfirmingRemoveVideoImage] = useState(false)
+  const [confirmingRemoveVideoBatch, setConfirmingRemoveVideoBatch] = useState(false)
+  const [removeDatasetMode, setRemoveDatasetMode] = useState(false)
+  const [selectedDatasetsToRemove, setSelectedDatasetsToRemove] = useState(new Set())
+  const [confirmingRemoveDatasets, setConfirmingRemoveDatasets] = useState(false)
+  const [selectedVideoBatch, setSelectedVideoBatch] = useState(null)
+
+  const videoImageGroups = useMemo(() => {
+    const groups = {}
+    for (const src of videoImages) {
+      const match = src.match(/\/imgs\/([^/]+)\//)
+      const batch = match ? match[1] : 'unknown'
+      if (!groups[batch]) groups[batch] = []
+      groups[batch].push(src)
+    }
+    return groups
+  }, [videoImages])
+
+  useEffect(() => {
+    const batches = Object.keys(videoImageGroups).sort()
+    setSelectedVideoBatch((current) =>
+      current && videoImageGroups[current] ? current : batches[0] ?? null,
+    )
+  }, [videoImageGroups])
+
+  const [modalIndex, setModalIndex] = useState(null)
+  const [imagePage, setImagePage] = useState(0)
+  const [imageTab, setImageTab] = useState('imported')
+  const [removeMode, setRemoveMode] = useState(false)
+  const [removeIndex, setRemoveIndex] = useState(0)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [confirmingRemoveImage, setConfirmingRemoveImage] = useState(false)
+  const [splitCount, setSplitCount] = useState(2)
+  const [splitConfirmOpen, setSplitConfirmOpen] = useState(false)
+  const [deleteBatchConfirmOpen, setDeleteBatchConfirmOpen] = useState(false)
+  const [assignOpen, setAssignOpen] = useState(false)
+  const [datasets, setDatasets] = useState([])
+  const [activePage, setActivePage] = useState('raw_video')
+  const [activeDataset, setActiveDataset] = useState('')
+  const [datasetBatches, setDatasetBatches] = useState([])
+  const [datasetImages, setDatasetImages] = useState([])
+  const [datasetAnnotations, setDatasetAnnotations] = useState({})
+  const [datasetBatchFilter, setDatasetBatchFilter] = useState(null)
+  const [showExportPanel, setShowExportPanel] = useState(false)
+  const [datasetSplit, setDatasetSplit] = useState({
+    train: 70,
+    val: 20,
+    test: 10,
+  })
+  const [exportResult, setExportResult] = useState(null)
+  const [exporting, setExporting] = useState(false)
+  const [newDatasetName, setNewDatasetName] = useState('')
+  const [selectedDataset, setSelectedDataset] = useState('')
+  const [templates, setTemplates] = useState([])
+  const [annotate, setAnnotate] = useState(null)
+  const [markedForRemoval, setMarkedForRemoval] = useState(new Set())
+
+  const toggleMarked = (image) => {
+    setMarkedForRemoval((prev) => {
+      const next = new Set(prev)
+      if (next.has(image)) {
+        next.delete(image)
+      } else {
+        next.add(image)
+      }
+      return next
+    })
+  }
+
+  const tabImages = {
+    imported: importedImages,
+    frames: frameImages,
+    crops: cropImages,
+  }
+  const activeImages = tabImages[imageTab]
+
+  const IMAGES_PER_PAGE = 50
+  const pageCount = Math.max(
+    1,
+    Math.ceil(activeImages.length / IMAGES_PER_PAGE),
+  )
+  const pageImages = activeImages.slice(
+    imagePage * IMAGES_PER_PAGE,
+    (imagePage + 1) * IMAGES_PER_PAGE,
+  )
+
+  const navigateModal = (delta) => {
+    setModalIndex((i) =>
+      i === null
+        ? null
+        : (i + delta + activeImages.length) % activeImages.length,
+    )
+  }
+
+  const navigateVideoModal = (delta) => {
+    setVideoModalIndex((i) =>
+      i === null
+        ? null
+        : (i + delta + videoImages.length) % videoImages.length,
+    )
+  }
+
+  const fetchVideos = async () => {
+    try {
+      const response = await fetch('/api/videos')
+      const data = await response.json()
+      setVideos(data.videos ?? [])
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const fetchVideoImages = async (filename) => {
+    try {
+      const response = await fetch(
+        `/api/videos/${encodeURIComponent(filename)}/images`,
+      )
+      const data = await response.json()
+      setVideoImages(data.images ?? [])
+    } catch {
+      setVideoImages([])
+    }
+  }
+
+  const doDeleteSelectedVideos = async () => {
+    if (selectedVideosToRemove.size === 0) return
+    setConfirmingRemoveVideos(false)
+    let deleted = 0
+    let failed = 0
+    for (const filename of selectedVideosToRemove) {
+      try {
+        const response = await fetch(
+          `/api/videos/${encodeURIComponent(filename)}`,
+          { method: 'DELETE' },
+        )
+        if (response.ok) {
+          deleted += 1
+        } else {
+          failed += 1
+        }
+      } catch {
+        failed += 1
+      }
+    }
+    if (deleted > 0) {
+      setSelectedFilename(null)
+      setVideoImages([])
+      fetchVideos()
+      fetchImages()
+    }
+    setSelectedVideosToRemove(new Set())
+    setRemoveVideoMode(false)
+    if (failed === 0) {
+      setStatus(`Deleted ${deleted} video${deleted === 1 ? '' : 's'}`)
+    } else {
+      setStatus(`Deleted ${deleted}, failed ${failed}`)
+    }
+  }
+
+  const doRemoveVideoBatch = async () => {
+    if (!selectedFilename || !selectedVideoBatch) return
+    setConfirmingRemoveVideoBatch(false)
+    try {
+      const response = await fetch(
+        `/api/videos/${encodeURIComponent(selectedFilename)}/batches/${encodeURIComponent(selectedVideoBatch)}`,
+        { method: 'DELETE' },
+      )
+      if (response.ok) {
+        setVideoModalIndex(null)
+        fetchVideoImages(selectedFilename)
+        fetchImages()
+        setStatus(`Deleted ${selectedVideoBatch}`)
+      } else {
+        const data = await response.json()
+        setStatus(`Failed: ${data.detail ?? 'Could not delete batch'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const doRemoveDatasets = async () => {
+    if (selectedDatasetsToRemove.size === 0) return
+    setConfirmingRemoveDatasets(false)
+    let deleted = 0
+    let failed = 0
+    for (const name of selectedDatasetsToRemove) {
+      try {
+        const response = await fetch(
+          `/api/datasets/${encodeURIComponent(name)}`,
+          { method: 'DELETE' },
+        )
+        if (response.ok) {
+          deleted += 1
+        } else {
+          failed += 1
+        }
+      } catch {
+        failed += 1
+      }
+    }
+    if (deleted > 0) {
+      if (selectedDatasetsToRemove.has(activeDataset)) {
+        setActiveDataset('')
+      }
+      fetchDatasets()
+    }
+    setSelectedDatasetsToRemove(new Set())
+    setRemoveDatasetMode(false)
+    if (failed === 0) {
+      setStatus(`Deleted ${deleted} dataset${deleted === 1 ? '' : 's'}`)
+    } else {
+      setStatus(`Deleted ${deleted}, failed ${failed}`)
+    }
+  }
+
+  const doRemoveVideoImage = async () => {
+    if (!removeVideoImageUrl) return
+    setConfirmingRemoveVideoImage(false)
+    const oldIndex = videoModalIndex ?? 0
+    const newLength = videoImages.length - 1
+    const nextIndex =
+      newLength > 0
+        ? Math.min(oldIndex >= newLength ? newLength - 1 : oldIndex, newLength - 1)
+        : null
+    try {
+      const response = await fetch('/api/images/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: [removeVideoImageUrl] }),
+      })
+      if (response.ok) {
+        setRemoveVideoImageUrl(null)
+        setVideoModalIndex(nextIndex)
+        fetchVideoImages(selectedFilename)
+        fetchImages()
+        setStatus('Image removed')
+      } else {
+        setStatus('Failed to remove image')
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const doVideoExtract = async () => {
+    if (!selectedFilename || videoExtracting) return
+    setVideoExtracting(true)
+    setStatus('Extracting...')
+    try {
+      const params = new URLSearchParams({
+        frames_per_minute: String(videoFramesPerMinute),
+        margin: String(videoCropMargin),
+        classes: videoSelectedClasses.join(','),
+        mode: videoMode,
+        confidence: String(videoConfidence / 100),
+      })
+      const response = await fetch(
+        `/api/videos/${encodeURIComponent(selectedFilename)}/frames?${params}`,
+        { method: 'POST' },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(`Extracted ${videoMode} for ${selectedFilename}`)
+        fetchImages()
+        fetchVideoImages(selectedFilename)
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Extraction failed'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setVideoExtracting(false)
+    }
+  }
+
+  const fetchImages = async (batch = null) => {
+    const url = batch
+      ? `/api/images?batch=${encodeURIComponent(batch)}`
+      : '/api/images'
+    try {
+      const response = await fetch(url)
+      const data = await response.json()
+      setImportedImages(data.imported ?? [])
+      setFrameImages(data.frames ?? [])
+      setCropImages(data.crops ?? [])
+      setImagePage(0)
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const fetchBatches = async () => {
+    try {
+      const response = await fetch('/api/batches')
+      const data = await response.json()
+      setBatches(data.batches ?? [])
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const doSplit = async () => {
+    const label = selectedBatch ? `batch ${selectedBatch}` : 'loose imports'
+    setStatus(`Splitting ${label}...`)
+    try {
+      const body = { count: splitCount }
+      if (selectedBatch) body.source = selectedBatch
+      const response = await fetch('/api/split-imports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(
+          `Split ${data.moved} images into ${data.batches.length} batches`,
+        )
+        setSelectedBatch(null)
+        setSplitConfirmOpen(false)
+        fetchBatches()
+        fetchImages()
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const fetchDatasets = async () => {
+    try {
+      const response = await fetch('/api/datasets')
+      const data = await response.json()
+      setDatasets((data.datasets ?? []).map((d) => (typeof d === 'string' ? { name: d, previews: [], batches: [] } : d)))
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const openDataset = async (name) => {
+    if (activeDataset === name) {
+      setActiveDataset('')
+      return
+    }
+    setExportResult(null)
+    setShowExportPanel(false)
+    setDatasetBatchFilter(null)
+    try {
+      const [datasetRes, imagesRes, annotRes] = await Promise.all([
+        fetch(`/api/datasets/${encodeURIComponent(name)}`),
+        fetch(`/api/datasets/${encodeURIComponent(name)}/images`),
+        fetch(`/api/datasets/${encodeURIComponent(name)}/annotations`),
+      ])
+      const data = await datasetRes.json()
+      const imagesData = await imagesRes.json()
+      const annotData = await annotRes.json()
+      if (datasetRes.ok && imagesRes.ok) {
+        setActiveDataset(data.name)
+        setDatasetBatches(data.batches ?? [])
+        setDatasetSplit(data.split ?? { train: 70, val: 20, test: 10 })
+        setDatasetImages(imagesData.images ?? [])
+        setDatasetAnnotations(annotData.annotations ?? {})
+      } else {
+        setStatus(`Failed: ${data.detail ?? imagesData.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const fetchTemplates = async () => {
+    try {
+      const response = await fetch('/api/templates')
+      const data = await response.json()
+      setTemplates(data.templates ?? [])
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const doSetTemplate = async (name, templateName) => {
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(name)}/template`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template: templateName }),
+        },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(`Set model for ${name} to ${templateName}`)
+        fetchDatasets()
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const openAnnotate = async (name, templateName, batchFilter = null, startImage = null) => {
+    if (!templateName) {
+      setStatus('Set a model for this dataset before annotating')
+      return
+    }
+    try {
+      const [imagesRes, attrsRes, annotRes] = await Promise.all([
+        fetch(`/api/datasets/${encodeURIComponent(name)}/images`),
+        fetch(`/api/templates/${encodeURIComponent(templateName)}/attributes`),
+        fetch(`/api/datasets/${encodeURIComponent(name)}/annotations`),
+      ])
+      const images = await imagesRes.json()
+      const attrs = await attrsRes.json()
+      const annot = await annotRes.json()
+      if (!imagesRes.ok || !attrsRes.ok || !annotRes.ok) {
+        setStatus('Failed to load annotation data')
+        return
+      }
+      const attributes = attrs.attributes ?? []
+      const length =
+        Math.max(
+          0,
+          ...attributes.flatMap((g) => g.indices),
+        ) + 1
+      const filteredImages = batchFilter
+        ? (images.images ?? []).filter((src) =>
+            src.includes(`/imports/${batchFilter}/`),
+          )
+        : images.images ?? []
+      const annotations = annot.annotations ?? {}
+      // Resume where you left off: start on the requested image, or the
+      // first not-yet-annotated one, or the first image as a fallback.
+      const startIndex = startImage
+        ? Math.max(0, filteredImages.indexOf(startImage))
+        : Math.max(
+            0,
+            filteredImages.findIndex((src) => annotations[src] === undefined),
+          )
+      const initialValues = annotations[filteredImages[startIndex]] ?? Array(length).fill(0)
+      const initialOptionIndex = (group) => {
+        if (!group) return 0
+        const selected = group.indices.findIndex((idx) => initialValues[idx] === 1)
+        return selected >= 0 ? selected : 0
+      }
+      setAnnotate({
+        dataset: name,
+        template: templateName,
+        batchFilter,
+        images: filteredImages,
+        attributes,
+        annotations,
+        length,
+        index: startIndex,
+        step: 0,
+        optionIndex: initialOptionIndex(attributes[0]),
+        wizardMode: true,
+      })
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const annotateValuesFor = (image) => {
+    if (!annotate) return []
+    return annotate.annotations[image] ?? Array(annotate.length).fill(0)
+  }
+
+  const setAnnotateValue = (group, optionIndex, checked) => {
+    setAnnotate((state) => {
+      if (!state) return state
+      const image = state.images[state.index]
+      const current = [...(state.annotations[image] ?? Array(state.length).fill(0))]
+      if (group.type === 'single') {
+        group.indices.forEach((idx) => {
+          current[idx] = 0
+        })
+        current[group.indices[optionIndex]] = 1
+      } else {
+        current[group.indices[optionIndex]] = checked ? 1 : 0
+      }
+      return {
+        ...state,
+        annotations: { ...state.annotations, [image]: current },
+      }
+    })
+  }
+
+  const saveAnnotation = async () => {
+    if (!annotate) return
+    const image = annotate.images[annotate.index]
+    const values = annotateValuesFor(image)
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(annotate.dataset)}/annotations`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image, values }),
+        },
+      )
+      if (!response.ok) {
+        const data = await response.json()
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      } else {
+        setStatus('Annotation saved')
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const requestRemoveImage = () => {
+    if (!annotate) return
+    setConfirmingRemoveImage(true)
+  }
+
+  const removeCurrentImage = async () => {
+    setConfirmingRemoveImage(false)
+    if (!annotate) return
+    const image = annotate.images[annotate.index]
+    try {
+      const response = await fetch('/api/images/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths: [image] }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setStatus(`Removed image (${data.deleted} deleted)`)
+      setDatasetImages((prev) => prev.filter((s) => s !== image))
+      setDatasetAnnotations((prev) => {
+        const next = { ...prev }
+        delete next[image]
+        return next
+      })
+      setAnnotate((state) => {
+        if (!state) return state
+        const newImages = state.images.filter((s) => s !== image)
+        const newAnnotations = { ...state.annotations }
+        delete newAnnotations[image]
+        if (newImages.length === 0) {
+          return null
+        }
+        const nextIndex = Math.min(state.index, newImages.length - 1)
+        const nextValues = newAnnotations[newImages[nextIndex]] ?? Array(state.length).fill(0)
+        return {
+          ...state,
+          images: newImages,
+          annotations: newAnnotations,
+          index: nextIndex,
+          step: 0,
+          optionIndex: initialOptionIndex(state.attributes[0], nextValues),
+        }
+      })
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const initialOptionIndex = (group, values) => {
+    if (!group) return 0
+    const selected = group.indices.findIndex((idx) => values[idx] === 1)
+    return selected >= 0 ? selected : 0
+  }
+
+  const navigateAnnotate = async (delta) => {
+    await saveAnnotation()
+    setAnnotate((state) => {
+      if (!state) return state
+      const nextIndex = Math.min(
+        Math.max(0, state.index + delta),
+        state.images.length - 1,
+      )
+      const nextImage = state.images[nextIndex]
+      const values = state.annotations[nextImage] ?? Array(state.length).fill(0)
+      return {
+        ...state,
+        index: nextIndex,
+        step: 0,
+        optionIndex: initialOptionIndex(state.attributes[0], values),
+      }
+    })
+  }
+
+  const jumpAnnotate = async (index) => {
+    await saveAnnotation()
+    setAnnotate((state) => {
+      if (!state) return state
+      const nextImage = state.images[index]
+      const values =
+        state.annotations[nextImage] ?? Array(state.length).fill(0)
+      return {
+        ...state,
+        index,
+        step: 0,
+        optionIndex: initialOptionIndex(state.attributes[0], values),
+      }
+    })
+  }
+
+  const optionNav = (delta) => {
+    setAnnotate((state) => {
+      if (!state) return state
+      const group = state.attributes[state.step]
+      if (!group) return state
+      const next =
+        (state.optionIndex + delta + group.options.length) %
+        group.options.length
+      return { ...state, optionIndex: next }
+    })
+  }
+
+  const wizardToggle = () => {
+    setAnnotate((state) => {
+      if (!state) return state
+      const group = state.attributes[state.step]
+      if (!group) return state
+      const image = state.images[state.index]
+      const values = [...(state.annotations[image] ?? Array(state.length).fill(0))]
+      const optionIdx = state.optionIndex
+      const isSelected = values[group.indices[optionIdx]] === 1
+      if (group.type === 'single') {
+        if (isSelected) return state
+        group.indices.forEach((idx) => {
+          values[idx] = 0
+        })
+        values[group.indices[optionIdx]] = 1
+      } else {
+        values[group.indices[optionIdx]] = isSelected ? 0 : 1
+      }
+      return {
+        ...state,
+        annotations: { ...state.annotations, [image]: values },
+      }
+    })
+  }
+
+  const wizardStepOptionIndex = (step, values) => {
+    return initialOptionIndex(annotate?.attributes?.[step], values)
+  }
+
+  const wizardNext = async () => {
+    if (!annotate) return
+    if (annotate.step < annotate.attributes.length - 1) {
+      setAnnotate((state) => {
+        if (!state) return state
+        const nextStep = state.step + 1
+        const image = state.images[state.index]
+        const values = state.annotations[image] ?? Array(state.length).fill(0)
+        return {
+          ...state,
+          step: nextStep,
+          optionIndex: initialOptionIndex(state.attributes[nextStep], values),
+        }
+      })
+    } else {
+      await navigateAnnotate(1)
+    }
+  }
+
+  const wizardPrev = async () => {
+    if (!annotate) return
+    if (annotate.step > 0) {
+      setAnnotate((state) => {
+        if (!state) return state
+        const prevStep = state.step - 1
+        const image = state.images[state.index]
+        const values = state.annotations[image] ?? Array(state.length).fill(0)
+        return {
+          ...state,
+          step: prevStep,
+          optionIndex: initialOptionIndex(state.attributes[prevStep], values),
+        }
+      })
+    } else {
+      await navigateAnnotate(-1)
+    }
+  }
+
+  const doSaveSplit = async () => {
+    const total =
+      Number(datasetSplit.train) +
+      Number(datasetSplit.val) +
+      Number(datasetSplit.test)
+    if (total !== 100) {
+      setStatus(`Split must sum to 100 (currently ${total})`)
+      return
+    }
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/split`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(datasetSplit),
+        },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(`Saved split for ${activeDataset}`)
+        setDatasetSplit(data.split)
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const doExportDataset = async () => {
+    const total =
+      Number(datasetSplit.train) +
+      Number(datasetSplit.val) +
+      Number(datasetSplit.test)
+    if (total !== 100) {
+      setStatus(`Split must sum to 100 (currently ${total})`)
+      return
+    }
+    setExporting(true)
+    setExportResult(null)
+    setStatus(`Exporting ${activeDataset}...`)
+    try {
+      // Make sure the export uses whatever ratio is currently shown,
+      // even if "Save split" wasn't clicked.
+      const splitResponse = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/split`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(datasetSplit),
+        },
+      )
+      if (!splitResponse.ok) {
+        const data = await splitResponse.json()
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        setExporting(false)
+        return
+      }
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/export`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        const total = data.counts.train + data.counts.val + data.counts.test
+        const missing = data.missing_annotations ?? 0
+        setStatus(
+          `Exported ${activeDataset}: train ${data.counts.train}, val ${data.counts.val}, test ${data.counts.test}` +
+            (missing > 0 ? ` — ${missing}/${total} images not annotated` : ''),
+        )
+        setExportResult(data)
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const doAssignBatch = async () => {
+    if (!selectedBatch) return
+    const name = newDatasetName.trim() || selectedDataset
+    if (!name) {
+      setStatus('Choose or enter a dataset name')
+      return
+    }
+    if (newDatasetName.trim() && !datasets.some((d) => d.name === newDatasetName.trim())) {
+      try {
+        const response = await fetch('/api/datasets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newDatasetName.trim() }),
+        })
+        if (!response.ok) {
+          const data = await response.json()
+          setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+          return
+        }
+      } catch {
+        setStatus('Failed: could not reach the server')
+        return
+      }
+    }
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(name)}/assign`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batch: selectedBatch }),
+        },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(
+          `Assigned ${data.batch} to ${data.dataset} as ${data.split}`,
+        )
+        setNewDatasetName('')
+        setSelectedDataset('')
+        setAssignOpen(false)
+        fetchDatasets()
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const doDeleteBatch = async () => {
+    if (!selectedBatch) return
+    setStatus(`Deleting batch ${selectedBatch}...`)
+    try {
+      const response = await fetch(
+        `/api/batches/${encodeURIComponent(selectedBatch)}`,
+        { method: 'DELETE' },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(`Deleted batch ${selectedBatch}`)
+        setSelectedBatch(null)
+        setDeleteBatchConfirmOpen(false)
+        fetchBatches()
+        fetchImages()
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  useEffect(() => {
+    fetchVideos()
+    fetchImages()
+    fetchBatches()
+    fetch('/api/classes')
+      .then((r) => r.json())
+      .then((d) => setYoloClasses(d.classes ?? []))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchDatasets()
+    fetchTemplates()
+  }, [])
+
+  useEffect(() => {
+    if (selectedFilename) {
+      fetchVideoImages(selectedFilename)
+    } else {
+      setVideoImages([])
+    }
+  }, [selectedFilename])
+
+  useEffect(() => {
+    if (!annotate) return
+    const handleKey = (e) => {
+      if (!annotate.wizardMode) {
+        if (e.key === 'ArrowLeft') navigateAnnotate(-1)
+        if (e.key === 'ArrowRight') navigateAnnotate(1)
+        if (e.key === 'Escape') setAnnotate(null)
+        return
+      }
+      if (
+        ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Enter'].includes(e.key)
+      ) {
+        e.preventDefault()
+      }
+      if (e.key === 'ArrowUp') optionNav(-1)
+      if (e.key === 'ArrowDown') optionNav(1)
+      if (e.key === 'ArrowLeft') wizardPrev()
+      if (e.key === 'ArrowRight' || e.key === 'Enter') wizardNext()
+      if (e.key === ' ') wizardToggle()
+      if (e.key === 'Escape') setAnnotate(null)
+      if (e.key === 'x' || e.key === 'X') requestRemoveImage()
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [annotate])
+
+  const handleFileChange = async (event) => {
+    const files = event.target.files ? Array.from(event.target.files) : []
+    if (files.length === 0) return
+
+    const uploaded = []
+    const failed = []
+    setStatus(`Uploading ${files.length} video${files.length === 1 ? '' : 's'}...`)
+    for (const file of files) {
+      const formData = new FormData()
+      formData.append('file', file)
+      try {
+        const response = await fetch('/api/upload/video', {
+          method: 'POST',
+          body: formData,
+        })
+        const data = await response.json()
+        if (response.ok) {
+          uploaded.push(data.filename)
+        } else {
+          failed.push(`${file.name}: ${data.detail ?? 'Unknown error'}`)
+        }
+      } catch {
+        failed.push(`${file.name}: could not reach server`)
+      }
+    }
+
+    if (failed.length === 0) {
+      setStatus(`Uploaded ${uploaded.length} video${uploaded.length === 1 ? '' : 's'}`)
+    } else {
+      setStatus(
+        `Uploaded ${uploaded.length}, failed ${failed.length}: ${failed.join('; ')}`,
+      )
+    }
+    if (uploaded.length > 0) fetchVideos()
+    event.target.value = ''
+  }
+
+  const handleTarChange = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const formData = new FormData()
+    formData.append('file', file)
+
+    setStatus('Extracting tar...')
+    try {
+      const response = await fetch('/api/upload/tar', {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(
+          `Extracted batch ${data.batch}: ${data.image_count} images, ${data.video_count} videos`,
+        )
+        fetchVideos()
+        fetchImages()
+        fetchBatches()
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-indigo-50">
+      <main className="min-w-0 flex-1 p-8">
+        <header className="flex items-center gap-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-800">
+              Dataset Collector
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {activePage === 'raw_video'
+                ? 'Upload videos and extract frames or crops'
+                : activePage === 'raw_image'
+                ? 'Upload TARs and curate imported, frames, and crops'
+                : 'Organize batches and export datasets'}
+            </p>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActivePage('raw_video')}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                activePage === 'raw_video'
+                  ? 'bg-indigo-500 text-white shadow'
+                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+              }`}
+            >
+              Raw Video
+            </button>
+            <button
+              type="button"
+              onClick={() => setActivePage('raw_image')}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                activePage === 'raw_image'
+                  ? 'bg-indigo-500 text-white shadow'
+                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+              }`}
+            >
+              Raw Image
+            </button>
+            <button
+              type="button"
+              onClick={() => setActivePage('datasets')}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                activePage === 'datasets'
+                  ? 'bg-emerald-500 text-white shadow'
+                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+              }`}
+            >
+              Datasets
+            </button>
+            <div className="mx-2 h-6 w-px bg-slate-300" />
+            <input
+              ref={tarInputRef}
+              type="file"
+              accept=".tar,.tar.gz,.tgz,.tar.bz2,.tar.xz"
+              className="hidden"
+              onChange={handleTarChange}
+            />
+            <button
+              type="button"
+              onClick={() => tarInputRef.current?.click()}
+              className="flex items-center gap-2 rounded-full bg-slate-800 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-slate-700"
+            >
+              <ArchiveIcon className="h-4 w-4" />
+              Upload Tar
+            </button>
+          </div>
+        </header>
+
+        {activePage === 'raw_video' && (
+          <section className="relative z-20 mt-8 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-slate-800">Videos</h2>
+            <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+              {videos.length}
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*"
+                multiple
+                className="hidden"
+                onChange={handleFileChange}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600"
+              >
+                <UploadIcon className="h-4 w-4" />
+                Upload Video
+              </button>
+              {!removeVideoMode ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRemoveVideoMode(true)
+                    setSelectedVideosToRemove(new Set())
+                  }}
+                  className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600"
+                >
+                  Remove videos
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingRemoveVideos(true)}
+                    disabled={selectedVideosToRemove.size === 0}
+                    className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600 disabled:opacity-40"
+                  >
+                    Delete {selectedVideosToRemove.size} video{selectedVideosToRemove.size === 1 ? '' : 's'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRemoveVideoMode(false)
+                      setSelectedVideosToRemove(new Set())
+                    }}
+                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="mt-4 flex max-w-full gap-3 overflow-x-auto overscroll-x-contain pb-3">
+            {videos.map((video) => (
+              <VideoThumb
+                key={video.filename}
+                video={video}
+                selected={selectedFilename === video.filename}
+                removeMode={removeVideoMode}
+                marked={selectedVideosToRemove.has(video.filename)}
+                onSelect={() => setSelectedFilename(video.filename)}
+                onToggleRemove={() =>
+                  setSelectedVideosToRemove((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(video.filename)) {
+                      next.delete(video.filename)
+                    } else {
+                      next.add(video.filename)
+                    }
+                    return next
+                  })
+                }
+              />
+            ))}
+            {videos.length === 0 && (
+              <div className="flex w-full shrink-0 items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
+                No videos yet — click Upload Video
+              </div>
+            )}
+          </div>
+
+          {selectedFilename && (
+            <div className="mt-6 space-y-6">
+              <div className="rounded-2xl border border-white/60 bg-white/70 p-5 shadow-sm backdrop-blur-sm">
+                <h3 className="text-base font-semibold text-slate-800">
+                  Menu generate image
+                </h3>
+
+                <div className="mt-4 flex flex-wrap items-center gap-4">
+                  <div className="flex gap-1 rounded-lg bg-slate-200/70 p-1">
+                    {[
+                      { value: 'frames', label: 'Get frame' },
+                      { value: 'crops', label: 'Get crop' },
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setVideoMode(option.value)}
+                        className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                          videoMode === option.value
+                            ? 'bg-white text-indigo-600 shadow'
+                            : 'text-slate-600 hover:text-slate-800'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {videoMode === 'crops' && (
+                    <label className="text-xs font-medium text-slate-700">
+                      Crop margin (px)
+                      <input
+                        type="number"
+                        min={0}
+                        max={200}
+                        value={videoCropMargin}
+                        onChange={(e) =>
+                          setVideoCropMargin(
+                            Math.min(200, Math.max(0, Number(e.target.value) || 0)),
+                          )
+                        }
+                        className="mt-1 block w-20 rounded border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-800"
+                      />
+                    </label>
+                  )}
+
+                  <label className="text-xs font-medium text-slate-700">
+                    Frames / min
+                    <input
+                      type="number"
+                      min={1}
+                      max={60}
+                      value={videoFramesPerMinute}
+                      onChange={(e) =>
+                        setVideoFramesPerMinute(
+                          Math.min(60, Math.max(1, Number(e.target.value) || 1)),
+                        )
+                      }
+                      className="mt-1 block w-20 rounded border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-800"
+                    />
+                  </label>
+
+                  <label className="text-xs font-medium text-slate-700">
+                    Confidence (%)
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={videoConfidence}
+                      onChange={(e) =>
+                        setVideoConfidence(
+                          Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                        )
+                      }
+                      className="mt-1 block w-20 rounded border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-800"
+                    />
+                  </label>
+
+                  {(videoMode === 'frames' || videoMode === 'crops') && (
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <span className="text-xs font-medium text-slate-700">
+                        YOLO classes
+                      </span>
+                      <div className="flex w-full items-center gap-2">
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const value = e.target.value
+                            if (value && !videoSelectedClasses.includes(value)) {
+                              setVideoSelectedClasses((prev) => [...prev, value])
+                            }
+                            e.target.value = ''
+                          }}
+                          className="w-48 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800"
+                        >
+                          <option value="">Add a class</option>
+                          {yoloClasses
+                            .filter((cls) => !videoSelectedClasses.includes(cls))
+                            .map((cls) => (
+                              <option key={cls} value={cls}>
+                                {cls}
+                              </option>
+                            ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={doVideoExtract}
+                          disabled={videoExtracting || videoSelectedClasses.length === 0}
+                          className="rounded-lg bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-indigo-600 disabled:opacity-50"
+                        >
+                          {videoExtracting ? 'Extracting...' : 'Extract'}
+                        </button>
+                        {videoSelectedClasses.length > 0 ? (
+                          <div className="ml-auto flex flex-wrap justify-end gap-2">
+                            {videoSelectedClasses.map((cls) => (
+                              <span
+                                key={cls}
+                                className="flex items-center gap-2 rounded-full bg-indigo-100 px-3 py-1.5 text-sm font-semibold text-indigo-700"
+                              >
+                                {cls}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setVideoSelectedClasses((prev) =>
+                                      prev.filter((c) => c !== cls),
+                                    )
+                                  }
+                                  className="text-indigo-700 hover:text-indigo-900"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">
+                            Pick at least one class to extract
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/60 bg-white/70 p-5 shadow-sm backdrop-blur-sm">
+                <div className="flex flex-wrap items-baseline justify-between gap-3">
+                  <h3 className="text-base font-semibold text-slate-800">
+                    Images (batch)
+                  </h3>
+
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedVideoBatch ?? ''}
+                      onChange={(e) => setSelectedVideoBatch(e.target.value)}
+                      className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 shadow-sm"
+                    >
+                      {Object.entries(videoImageGroups)
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([batch, images]) => (
+                          <option key={batch} value={batch}>
+                            Batch {batch} ({images.length})
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingRemoveVideoBatch(true)}
+                      disabled={!selectedVideoBatch}
+                      className="rounded-full bg-red-500 px-3 py-1.5 text-xs font-semibold text-white shadow transition hover:bg-red-600 disabled:opacity-40"
+                    >
+                      Remove batch
+                    </button>
+                  </div>
+                </div>
+
+                {videoImages.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-500">
+                    No extracted images yet.
+                  </p>
+                ) : selectedVideoBatch ? (
+                  <div className="mt-4 grid grid-cols-6 gap-3">
+                    {(videoImageGroups[selectedVideoBatch] ?? []).map((src) => (
+                      <button
+                        key={src}
+                        type="button"
+                        onClick={() =>
+                          setVideoModalIndex(videoImages.indexOf(src))
+                        }
+                        className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
+                      >
+                        <img
+                          src={`/api${src}`}
+                          alt=""
+                          className="aspect-video w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
+        </section>
+        )}
+
+        {activePage === 'raw_image' && (
+        <section className="mt-6 rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+          <div className="flex items-baseline gap-3">
+            <h2 className="text-lg font-semibold text-slate-800">Images</h2>
+            <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+              {activeImages.length}
+            </span>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <div className="flex gap-1 rounded-full bg-slate-200/70 p-1">
+              {[
+                {
+                  key: 'imported',
+                  label: `Imported (${importedImages.length})`,
+                },
+                { key: 'frames', label: `Frames (${frameImages.length})` },
+                { key: 'crops', label: `Crops (${cropImages.length})` },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => {
+                    setImageTab(tab.key)
+                    setImagePage(0)
+                    setMarkedForRemoval(new Set())
+                    if (tab.key !== 'imported') {
+                      setSelectedBatch(null)
+                    } else {
+                      fetchImages(selectedBatch)
+                    }
+                  }}
+                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                    imageTab === tab.key
+                      ? 'bg-white text-slate-800 shadow'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            {imageTab === 'imported' && batches.length > 0 && (
+              <select
+                value={selectedBatch ?? ''}
+                onChange={(e) => {
+                  const batch = e.target.value || null
+                  setSelectedBatch(batch)
+                  fetchImages(batch)
+                }}
+                className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 shadow-sm"
+              >
+                <option value="">All batches</option>
+                {batches.map((batch, i) => (
+                  <option key={batch} value={batch}>
+                    Batch {i + 1} ({batch})
+                  </option>
+                ))}
+              </select>
+            )}
+            {imageTab === 'imported' && selectedBatch && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setSplitConfirmOpen((v) => !v)}
+                  className="rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
+                >
+                  {selectedBatch ? 'Split this batch' : 'Split imports'}
+                </button>
+
+                {splitConfirmOpen && (
+                  <div className="absolute left-1/2 top-full z-20 mt-2 w-64 -translate-x-1/2 rounded-xl border border-white/10 bg-slate-900/95 p-3.5 shadow-2xl backdrop-blur-md">
+                    <button
+                      type="button"
+                      onClick={() => setSplitConfirmOpen(false)}
+                      className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-xs text-slate-300 hover:bg-slate-600 hover:text-white"
+                    >
+                      ×
+                    </button>
+                    <p className="pr-4 text-xs font-medium text-white">
+                      {selectedBatch
+                        ? `Split batch "${selectedBatch}" into how many batches?`
+                        : 'Split all loose imports into how many batches?'}
+                    </p>
+                    <label className="mt-3 flex items-center justify-between text-xs font-medium text-white">
+                      Number of batches
+                      <input
+                        type="number"
+                        min={1}
+                        value={splitCount}
+                        onChange={(e) =>
+                          setSplitCount(
+                            Math.max(1, Number(e.target.value) || 1),
+                          )
+                        }
+                        className="w-16 rounded border border-slate-500 bg-slate-700 px-1.5 py-1 text-xs text-white"
+                      />
+                    </label>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSplitConfirmOpen(false)}
+                        className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-600"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={doSplit}
+                        className="flex-1 rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-indigo-500/30 transition hover:bg-indigo-600"
+                      >
+                        Split
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {imageTab === 'imported' && selectedBatch && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setAssignOpen((v) => !v)}
+                  className="rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
+                >
+                  Assign to dataset
+                </button>
+
+                {assignOpen && (
+                  <div className="absolute left-1/2 top-full z-30 mt-2 w-64 -translate-x-1/2 rounded-xl border border-white/10 bg-slate-900 p-3.5 shadow-2xl">
+                    <button
+                      type="button"
+                      onClick={() => setAssignOpen(false)}
+                      className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-xs text-slate-300 hover:bg-slate-600 hover:text-white"
+                    >
+                      ×
+                    </button>
+                    <p className="pr-4 text-xs font-medium text-white">
+                      Assign "{selectedBatch}" to a dataset
+                    </p>
+                    {datasets.length > 0 && (
+                      <label className="mt-3 block text-xs font-medium text-slate-300">
+                        Existing dataset
+                        <select
+                          value={selectedDataset}
+                          onChange={(e) => {
+                            setSelectedDataset(e.target.value)
+                            setNewDatasetName('')
+                          }}
+                          className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-1.5 py-1 text-xs text-white"
+                        >
+                          <option value="">-- or create new --</option>
+                          {datasets.map((d) => (
+                            <option key={d.name} value={d.name}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    <label className="mt-3 block text-xs font-medium text-slate-300">
+                      New dataset name
+                      <input
+                        type="text"
+                        value={newDatasetName}
+                        onChange={(e) => {
+                          setNewDatasetName(e.target.value)
+                          setSelectedDataset('')
+                        }}
+                        placeholder="e.g. classroom"
+                        className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-1.5 py-1 text-xs text-white placeholder-slate-400"
+                      />
+                    </label>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAssignOpen(false)}
+                        className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-600"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={doAssignBatch}
+                        className="flex-1 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-emerald-500/30 transition hover:bg-emerald-600"
+                      >
+                        Assign
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {imageTab === 'imported' && selectedBatch && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setDeleteBatchConfirmOpen((v) => !v)}
+                  className="rounded-full border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-100"
+                >
+                  Delete batch
+                </button>
+
+                {deleteBatchConfirmOpen && (
+                  <div className="absolute left-1/2 top-full z-20 mt-2 w-64 -translate-x-1/2 rounded-xl border border-white/10 bg-slate-900 p-3.5 shadow-2xl">
+                    <button
+                      type="button"
+                      onClick={() => setDeleteBatchConfirmOpen(false)}
+                      className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-xs text-slate-300 hover:bg-slate-600 hover:text-white"
+                    >
+                      ×
+                    </button>
+                    <p className="pr-4 text-xs font-medium text-white">
+                      Delete batch "{selectedBatch}" and all its images?
+                      This cannot be undone.
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDeleteBatchConfirmOpen(false)}
+                        className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-600"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={doDeleteBatch}
+                        className="flex-1 rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-red-500/30 transition hover:bg-red-600"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setModalIndex(null)
+                setRemoveIndex(null)
+                setRemoveMode(true)
+                setMarkedForRemoval(new Set())
+              }}
+              className="ml-auto flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-red-500/30 transition hover:bg-red-600"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="h-4 w-4"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+                />
+              </svg>
+              Remove Mode
+            </button>
+          </div>
+          <div className="mt-4 grid grid-cols-6 gap-3">
+            {pageImages.map((image, index) => (
+              <button
+                key={image}
+                type="button"
+                onClick={() =>
+                  setModalIndex(imagePage * IMAGES_PER_PAGE + index)
+                }
+                className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
+              >
+                <img
+                  src={`/api${image}`}
+                  alt=""
+                  className="aspect-video w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105"
+                />
+              </button>
+            ))}
+          </div>
+          {activeImages.length === 0 && (
+            <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
+              No {imageTab} yet
+            </div>
+          )}
+          {pageCount > 1 && (
+            <div className="mt-5 flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setImagePage((p) => Math.max(0, p - 1))}
+                disabled={imagePage === 0}
+                className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
+              >
+                ← Prev
+              </button>
+              <span className="text-sm text-slate-500">
+                Page {imagePage + 1} of {pageCount} · {activeImages.length}{' '}
+                images
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setImagePage((p) => Math.min(pageCount - 1, p + 1))
+                }
+                disabled={imagePage >= pageCount - 1}
+                className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
+              >
+                Next →
+              </button>
+            </div>
+          )}
+        </section>
+        )}
+
+        {activePage === 'datasets' && (
+          <section className="mt-8 rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+            <div className="flex items-baseline gap-3">
+              <h2 className="text-lg font-semibold text-slate-800">Datasets</h2>
+              <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                {datasets.length}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
+                {!removeDatasetMode ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRemoveDatasetMode(true)
+                      setSelectedDatasetsToRemove(new Set())
+                    }}
+                    className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600"
+                  >
+                    Remove datasets
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingRemoveDatasets(true)}
+                      disabled={selectedDatasetsToRemove.size === 0}
+                      className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600 disabled:opacity-40"
+                    >
+                      Delete {selectedDatasetsToRemove.size} dataset{selectedDatasetsToRemove.size === 1 ? '' : 's'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRemoveDatasetMode(false)
+                        setSelectedDatasetsToRemove(new Set())
+                      }}
+                      className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          {datasets.length === 0 ? (
+            <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
+              No datasets yet — assign a batch to create one
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-6 gap-3">
+              {datasets.map((d) => (
+                <div
+                  key={d.name}
+                  onClick={() => {
+                    if (removeDatasetMode) {
+                      setSelectedDatasetsToRemove((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(d.name)) {
+                          next.delete(d.name)
+                        } else {
+                          next.add(d.name)
+                        }
+                        return next
+                      })
+                    } else {
+                      openDataset(d.name)
+                    }
+                  }}
+                  className={`relative w-full cursor-pointer overflow-hidden rounded-2xl border transition ${
+                    activeDataset === d.name
+                      ? 'border-emerald-400 bg-emerald-50/40'
+                      : 'border-slate-200 bg-white hover:border-emerald-300'
+                  } ${
+                    selectedDatasetsToRemove.has(d.name)
+                      ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-white'
+                      : ''
+                  }`}
+                >
+                  {removeDatasetMode && (
+                    <div
+                      className={`absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 ${
+                        selectedDatasetsToRemove.has(d.name)
+                          ? 'border-red-500 bg-red-500 text-white'
+                          : 'border-white bg-white/50 text-transparent'
+                      }`}
+                    >
+                      ✓
+                    </div>
+                  )}
+                  <div className="flex flex-col">
+                    <div className="relative w-full shrink-0 overflow-hidden rounded-t-lg bg-slate-100" style={{ aspectRatio: '16 / 9' }}>
+                      {d.previews && d.previews.length > 0 ? (
+                        <img
+                          src={`/api${d.previews[0]}`}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
+                          No images
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 p-3 pt-2">
+                      <h3 className="truncate text-base font-semibold text-slate-800">
+                        {d.name}
+                      </h3>
+                      <p className="text-sm text-slate-500">
+                        {d.batch_count ?? d.batches?.length ?? 0} batch
+                        {(d.batch_count ?? d.batches?.length ?? 0) === 1
+                          ? ''
+                          : 'es'}
+                      </p>
+                      <label
+                        className="mt-2 block text-xs text-slate-500"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Model
+                        <select
+                          value={d.template ?? ''}
+                          onChange={(e) =>
+                            doSetTemplate(d.name, e.target.value)
+                          }
+                          className="mt-1 w-full rounded border border-slate-300 px-1.5 py-1 text-xs text-slate-700"
+                        >
+                          <option value="" disabled>
+                            -- choose model --
+                          </option>
+                          {templates.map((t) => (
+                            <option key={t.name} value={t.name}>
+                              {t.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeDataset && (() => {
+            const filteredImages = datasetBatchFilter
+              ? datasetImages.filter((src) =>
+                  src.includes(`/imports/${datasetBatchFilter}/`),
+                )
+              : datasetImages
+            const annotatedCount = filteredImages.filter(
+              (src) => datasetAnnotations[src] !== undefined,
+            ).length
+            return (
+            <section className="mt-6 rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-semibold text-slate-800">
+                  {activeDataset}
+                </h2>
+                <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                  {annotatedCount} / {filteredImages.length} annotated
+                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const dataset = datasets.find(
+                        (d) => d.name === activeDataset,
+                      )
+                      openAnnotate(
+                        activeDataset,
+                        dataset?.template,
+                        datasetBatchFilter,
+                      )
+                    }}
+                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
+                  >
+                    Annotate{datasetBatchFilter ? ` (${datasetBatchFilter})` : ''}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowExportPanel((v) => !v)}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
+                  >
+                    Export
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveDataset('')}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-200 hover:text-slate-800"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              {datasetBatches.length > 1 && (
+                <div className="mt-3 flex flex-wrap gap-1 rounded-full bg-slate-200/70 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setDatasetBatchFilter(null)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                      datasetBatchFilter === null
+                        ? 'bg-white text-slate-800 shadow'
+                        : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    All batches
+                  </button>
+                  {datasetBatches.map((batch) => (
+                    <button
+                      key={batch}
+                      type="button"
+                      onClick={() => setDatasetBatchFilter(batch)}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                        datasetBatchFilter === batch
+                          ? 'bg-white text-slate-800 shadow'
+                          : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      {batch}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {showExportPanel && (
+                <div className="relative mt-4 flex flex-col items-stretch gap-2.5 rounded-xl border border-white/10 bg-slate-900 p-3.5 shadow-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setShowExportPanel(false)}
+                    className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-xs text-slate-300 hover:bg-slate-600 hover:text-white"
+                  >
+                    ×
+                  </button>
+                  <h4 className="pr-4 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                    Split ratio (%)
+                  </h4>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {['train', 'val', 'test'].map((key) => (
+                      <label
+                        key={key}
+                        className="flex items-center gap-1 text-xs font-medium text-white"
+                      >
+                        <span className="capitalize">{key}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={datasetSplit[key]}
+                          onChange={(e) =>
+                            setDatasetSplit((s) => ({
+                              ...s,
+                              [key]: Number(e.target.value) || 0,
+                            }))
+                          }
+                          className="w-14 rounded border border-slate-500 bg-slate-700 px-1.5 py-1 text-xs text-white"
+                        />
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={doSaveSplit}
+                      className="rounded-lg border border-slate-600 bg-slate-700 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-slate-600"
+                    >
+                      Save split
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={doExportDataset}
+                      disabled={exporting || datasetBatches.length === 0}
+                      className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-50"
+                    >
+                      {exporting ? 'Exporting...' : 'Export dataset'}
+                    </button>
+                    {exportResult && (
+                      <>
+                        <span className="text-xs text-slate-400">
+                          {exportResult.counts.train}/{exportResult.counts.val}/{exportResult.counts.test}
+                        </span>
+                        <a
+                          href={`/api${exportResult.download}`}
+                          className="rounded-full border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 transition hover:bg-emerald-500/20"
+                        >
+                          Download tar
+                        </a>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {filteredImages.length === 0 ? (
+                <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
+                  No images in this dataset
+                </div>
+              ) : (
+                <div className="mt-4 grid grid-cols-6 gap-3">
+                  {filteredImages.map((src) => {
+                    const isAnnotated = datasetAnnotations[src] !== undefined
+                    return (
+                      <button
+                        type="button"
+                        key={src}
+                        title={isAnnotated ? 'Annotated — click to edit' : 'Click to start annotating here'}
+                        onClick={() => {
+                          const dataset = datasets.find(
+                            (d) => d.name === activeDataset,
+                          )
+                          openAnnotate(
+                            activeDataset,
+                            dataset?.template,
+                            datasetBatchFilter,
+                            src,
+                          )
+                        }}
+                        className="relative block"
+                      >
+                        <img
+                          src={`/api${src}`}
+                          alt=""
+                          className={`aspect-video w-full rounded-lg object-cover shadow transition hover:scale-105 ${
+                            isAnnotated ? 'ring-2 ring-emerald-500' : ''
+                          }`}
+                        />
+                        {isAnnotated && (
+                          <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-bold text-white shadow">
+                            ✓
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </section>
+            )
+          })()}
+        </section>
+        )}
+      </main>
+
+      <ImageModal
+        images={activeImages}
+        index={removeMode ? null : modalIndex}
+        onClose={() => setModalIndex(null)}
+        onNavigate={navigateModal}
+        onSelect={setModalIndex}
+      />
+
+      <ImageModal
+        images={videoImages}
+        index={videoModalIndex}
+        onClose={() => setVideoModalIndex(null)}
+        onNavigate={navigateVideoModal}
+        onSelect={setVideoModalIndex}
+        onRemove={(src) => {
+          setRemoveVideoImageUrl(src)
+          setConfirmingRemoveVideoImage(true)
+        }}
+      />
+
+      {annotate && (
+        <div className="fixed inset-0 z-50 flex bg-black/90 backdrop-blur-sm">
+          <div className="relative flex flex-1 flex-col overflow-hidden">
+            <div className="relative z-10 flex items-center gap-3 border-b border-white/10 bg-black/50 px-4 py-2">
+              <span className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white">
+                {annotate.dataset}{annotate.batchFilter ? ` (${annotate.batchFilter})` : ''} · {annotate.index + 1} / {annotate.images.length}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  title="Remove image (X)"
+                  onClick={requestRemoveImage}
+                  className="flex h-9 items-center gap-1.5 rounded-full bg-red-500/80 px-3 text-sm font-medium text-white transition hover:bg-red-500"
+                >
+                  Remove
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAnnotate(null)}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {annotate.images.length > 0 && (
+              <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 bg-black/40 p-2">
+                {annotate.images.map((src, i) => {
+                  const isAnnotated = annotate.annotations[src] !== undefined
+                  return (
+                    <button
+                      key={src}
+                      type="button"
+                      onClick={() => jumpAnnotate(i)}
+                      className={`relative h-14 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition ${
+                        i === annotate.index
+                          ? 'border-indigo-500'
+                          : 'border-transparent opacity-60 hover:opacity-100'
+                      } ${isAnnotated ? 'ring-2 ring-emerald-500' : ''}`}
+                    >
+                      <img
+                        src={`/api${src}`}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                      {isAnnotated && (
+                        <span className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[8px] font-bold text-white">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className="relative flex flex-1 items-center justify-center overflow-hidden p-4">
+              {annotate.images.length === 0 ? (
+                <p className="text-sm text-slate-400">No images to annotate</p>
+              ) : (
+                <img
+                  src={`/api${annotate.images[annotate.index]}`}
+                  alt=""
+                  className="h-full w-full object-contain"
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => navigateAnnotate(-1)}
+                disabled={annotate.index === 0}
+                className="absolute left-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20 disabled:opacity-30"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                onClick={() => navigateAnnotate(1)}
+                disabled={annotate.index >= annotate.images.length - 1}
+                className="absolute right-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20 disabled:opacity-30"
+              >
+                →
+              </button>
+            </div>
+          </div>
+
+          <div className="w-80 shrink-0 overflow-y-auto border-l border-white/10 bg-slate-900 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold text-white">
+                {annotate.wizardMode ? 'Wizard' : 'Attributes'} ({annotate.template})
+              </h3>
+              <button
+                type="button"
+                onClick={() =>
+                  setAnnotate((s) => ({ ...s, wizardMode: !s.wizardMode }))
+                }
+                className="rounded border border-slate-600 px-2 py-1 text-xs text-slate-300 transition hover:bg-slate-700"
+              >
+                {annotate.wizardMode ? 'Freeform' : 'Wizard'}
+              </button>
+            </div>
+
+            {annotate.wizardMode ? (
+              <div className="mt-4">
+                {(() => {
+                  const group = annotate.attributes[annotate.step]
+                  const values = annotateValuesFor(
+                    annotate.images[annotate.index],
+                  )
+                  const isLast =
+                    annotate.step === annotate.attributes.length - 1
+                  return (
+                    <>
+                      <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
+                        <span>
+                          {annotate.step + 1} / {annotate.attributes.length}
+                        </span>
+                        <span className="uppercase tracking-wide">
+                          {group.name}
+                        </span>
+                      </div>
+                      <div className="h-1 overflow-hidden rounded-full bg-slate-700">
+                        <div
+                          className="h-full bg-indigo-500 transition-all"
+                          style={{
+                            width: `${((annotate.step + 1) / annotate.attributes.length) * 100}%`,
+                          }}
+                        />
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-2">
+                        {group.options.map((option, i) => {
+                          const selected =
+                            values[group.indices[i]] === 1
+                          const highlighted = i === annotate.optionIndex
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              onClick={() => {
+                                setAnnotate((s) => ({
+                                  ...s,
+                                  optionIndex: i,
+                                }))
+                                setAnnotateValue(group, i, true)
+                              }}
+                              className={`rounded-lg border px-3 py-2 text-left text-sm text-white transition ${
+                                selected
+                                  ? 'border-indigo-500 bg-indigo-600'
+                                  : 'border-slate-600 bg-slate-800 hover:bg-slate-700'
+                              } ${
+                                highlighted
+                                  ? 'ring-2 ring-indigo-400'
+                                  : ''
+                              }`}
+                            >
+                              {option}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <div className="mt-4 flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={wizardPrev}
+                          className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-xs text-white transition hover:bg-slate-700"
+                        >
+                          ← Prev
+                        </button>
+                        <button
+                          type="button"
+                          onClick={wizardNext}
+                          className="rounded-lg bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-indigo-500/30 transition hover:bg-indigo-600"
+                        >
+                          {isLast ? 'Save & next image' : 'Next →'}
+                        </button>
+                      </div>
+
+                      <p className="mt-3 text-xs text-slate-500">
+                        ↑↓ move · Space toggle · → next · ← prev
+                      </p>
+                    </>
+                  )
+                })()}
+              </div>
+            ) : (
+              <>
+                <div className="mt-3 space-y-4">
+                  {annotate.attributes.map((group) => {
+                    const values = annotateValuesFor(
+                      annotate.images[annotate.index],
+                    )
+                    return (
+                      <div key={group.name}>
+                        <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          {group.name}
+                        </h4>
+                        <div className="mt-1.5 space-y-1">
+                          {group.options.map((option, i) => (
+                            <label
+                              key={option}
+                              className="flex items-center gap-2 text-sm text-white"
+                            >
+                              <input
+                                type={
+                                  group.type === 'single'
+                                    ? 'radio'
+                                    : 'checkbox'
+                                }
+                                name={
+                                  group.type === 'single'
+                                    ? group.name
+                                    : undefined
+                                }
+                                checked={values[group.indices[i]] === 1}
+                                onChange={(e) =>
+                                  setAnnotateValue(group, i, e.target.checked)
+                                }
+                                className="accent-indigo-500"
+                              />
+                              {option}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={saveAnnotation}
+                  className="mt-4 w-full rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-indigo-500/30 transition hover:bg-indigo-600"
+                >
+                  Save annotation
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {removeMode && removeIndex === null && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black/85 backdrop-blur-sm">
+          <div className="relative z-30 flex items-center gap-4 border-b border-white/10 bg-black/50 px-6 py-3 backdrop-blur-md">
+            <h2 className="text-base font-semibold text-white">
+              Remove Mode — pick a starting image
+            </h2>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={() => setRemoveMode(false)}
+              className="rounded-full border border-white/10 bg-white/10 px-5 py-2 text-sm font-medium text-white backdrop-blur-md transition hover:bg-white/20"
+            >
+              Cancel
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6">
+            <div className="grid grid-cols-6 gap-2">
+              {activeImages.map((image, i) => (
+                <img
+                  key={image}
+                  src={`/api${image}`}
+                  alt=""
+                  onClick={() => setRemoveIndex(i)}
+                  className="aspect-video w-full cursor-pointer rounded object-cover opacity-60 shadow transition hover:opacity-100 hover:ring-2 hover:ring-indigo-400"
+                />
+              ))}
+              {activeImages.length === 0 && (
+                <p className="col-span-6 text-sm text-slate-400">
+                  No {imageTab} yet.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {removeMode && removeIndex !== null && (
+        <RemoveModeModal
+          images={activeImages}
+          index={removeIndex}
+          marked={markedForRemoval}
+          onToggleMark={toggleMarked}
+          onNavigate={(delta) =>
+            setRemoveIndex(
+              (i) =>
+                (i + delta + activeImages.length) % activeImages.length,
+            )
+          }
+          onSelect={setRemoveIndex}
+          onClose={() => {
+            setRemoveMode(false)
+            setMarkedForRemoval(new Set())
+          }}
+          onDone={() => {
+            if (markedForRemoval.size === 0) {
+              setRemoveMode(false)
+              return
+            }
+            setConfirmingDelete(true)
+          }}
+        />
+      )}
+
+      {confirmingDelete && (
+        <ConfirmModal
+          count={markedForRemoval.size}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={async () => {
+            try {
+              await fetch('/api/images/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paths: [...markedForRemoval] }),
+              })
+              await fetchImages()
+            } catch {
+              setStatus('Failed: could not reach the server')
+            }
+            setConfirmingDelete(false)
+            setRemoveMode(false)
+            setMarkedForRemoval(new Set())
+          }}
+        />
+      )}
+
+      {confirmingRemoveImage && (
+        <ConfirmModal
+          count={1}
+          onCancel={() => setConfirmingRemoveImage(false)}
+          onConfirm={removeCurrentImage}
+        />
+      )}
+
+      {confirmingRemoveVideos && (
+        <ConfirmModal
+          count={selectedVideosToRemove.size}
+          title={`Delete ${selectedVideosToRemove.size} video${selectedVideosToRemove.size === 1 ? '' : 's'}?`}
+          message="This will permanently remove the selected videos and all their extracted images. This action cannot be undone."
+          onCancel={() => setConfirmingRemoveVideos(false)}
+          onConfirm={doDeleteSelectedVideos}
+        />
+      )}
+
+      {confirmingRemoveVideoImage && (
+        <ConfirmModal
+          count={1}
+          title="Remove image?"
+          message="This image will be permanently deleted. This action cannot be undone."
+          onCancel={() => setConfirmingRemoveVideoImage(false)}
+          onConfirm={doRemoveVideoImage}
+        />
+      )}
+
+      {confirmingRemoveVideoBatch && (
+        <ConfirmModal
+          count={1}
+          title="Remove batch?"
+          message={`This will permanently remove ${selectedVideoBatch} and all its images. This action cannot be undone.`}
+          onCancel={() => setConfirmingRemoveVideoBatch(false)}
+          onConfirm={doRemoveVideoBatch}
+        />
+      )}
+
+      {confirmingRemoveDatasets && (
+        <ConfirmModal
+          count={selectedDatasetsToRemove.size}
+          title={`Delete ${selectedDatasetsToRemove.size} dataset${selectedDatasetsToRemove.size === 1 ? '' : 's'}?`}
+          message="This will remove the selected datasets and their annotations. Batches and images will remain in Raw Image. This action cannot be undone."
+          onCancel={() => setConfirmingRemoveDatasets(false)}
+          onConfirm={doRemoveDatasets}
+        />
+      )}
+
+    </div>
+  )
+}
+
+export default App

@@ -1,0 +1,56 @@
+label: paddlepaddle - person attribute
+
+folder:
+  test: test
+  train: train
+  val: val
+
+text:
+  test: test_list.txt
+  train: train_list.txt
+  val: val_list.txt
+
+# 26-length PA100k-style person attribute schema used by PULC person_attribute.
+# `type: single` means exactly one option in the group should be 1 (radio buttons).
+# `type: multi` means zero or more options can be 1 (checkboxes).
+attributes:
+  - name: Hat
+    type: multi
+    indices: [0]
+    options: [Hat]
+  - name: Glasses
+    type: multi
+    indices: [1]
+    options: [Glasses]
+  - name: Upper
+    type: multi
+    indices: [2, 3, 4, 5, 6, 7]
+    options: [ShortSleeve, LongSleeve, UpperStride, UpperLogo, UpperPlaid, UpperSplice]
+  - name: Lower
+    type: multi
+    indices: [8, 9, 10, 11, 12, 13]
+    options: [LowerStripe, LowerPattern, LongCoat, Trousers, Shorts, 'Skirt&Dress']
+  - name: Boots
+    type: multi
+    indices: [14]
+    options: [Boots]
+  - name: Bag
+    type: multi
+    indices: [15, 16, 17]
+    options: [HandBag, ShoulderBag, Backpack]
+  - name: HoldObjectsInFront
+    type: multi
+    indices: [18]
+    options: [HoldObjectsInFront]
+  - name: Age
+    type: single
+    indices: [19, 20, 21]
+    options: [AgeLess18, Age18-60, AgeOver60]
+  - name: Gender
+    type: multi
+    indices: [22]
+    options: [Female (uncheck = Male)]
+  - name: Direction
+    type: single
+    indices: [23, 24, 25]
+    options: [Front, Side, Back]
