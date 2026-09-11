@@ -398,6 +398,8 @@ function App() {
   const [importedImages, setImportedImages] = useState([])
   const [frameImages, setFrameImages] = useState([])
   const [cropImages, setCropImages] = useState([])
+  const [selectedRaw, setSelectedRaw] = useState(null)
+  const [selectedRawImages, setSelectedRawImages] = useState([])
   const [yoloClasses, setYoloClasses] = useState([])
   const [batches, setBatches] = useState([])
   const [selectedBatch, setSelectedBatch] = useState(null)
@@ -417,8 +419,15 @@ function App() {
   const [removeVideoImageUrl, setRemoveVideoImageUrl] = useState(null)
   const [confirmingRemoveVideoImage, setConfirmingRemoveVideoImage] = useState(false)
   const [confirmingRemoveVideoBatch, setConfirmingRemoveVideoBatch] = useState(false)
+  const [rawSelectedClasses, setRawSelectedClasses] = useState([])
+  const [rawConfidence, setRawConfidence] = useState(70)
+  const [rawCropMargin, setRawCropMargin] = useState(0)
+  const [rawGenerating, setRawGenerating] = useState(false)
   const [removeDatasetMode, setRemoveDatasetMode] = useState(false)
   const [selectedDatasetsToRemove, setSelectedDatasetsToRemove] = useState(new Set())
+  const [removeRawMode, setRemoveRawMode] = useState(false)
+  const [selectedRawsToRemove, setSelectedRawsToRemove] = useState(new Set())
+  const [confirmingRemoveRaws, setConfirmingRemoveRaws] = useState(false)
   const [confirmingRemoveDatasets, setConfirmingRemoveDatasets] = useState(false)
   const [selectedVideoBatch, setSelectedVideoBatch] = useState(null)
 
@@ -442,7 +451,7 @@ function App() {
 
   const [modalIndex, setModalIndex] = useState(null)
   const [imagePage, setImagePage] = useState(0)
-  const [imageTab, setImageTab] = useState('imported')
+
   const [removeMode, setRemoveMode] = useState(false)
   const [removeIndex, setRemoveIndex] = useState(0)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -467,6 +476,11 @@ function App() {
   const [exportResult, setExportResult] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [newDatasetName, setNewDatasetName] = useState('')
+  const [createDatasetOpen, setCreateDatasetOpen] = useState(false)
+  const [createDatasetName, setCreateDatasetName] = useState('')
+  const [createDatasetTemplate, setCreateDatasetTemplate] = useState('')
+  const [assignToDatasetOpen, setAssignToDatasetOpen] = useState(false)
+  const [assignToDatasetBatch, setAssignToDatasetBatch] = useState('')
   const [selectedDataset, setSelectedDataset] = useState('')
   const [templates, setTemplates] = useState([])
   const [annotate, setAnnotate] = useState(null)
@@ -484,12 +498,19 @@ function App() {
     })
   }
 
-  const tabImages = {
-    imported: importedImages,
-    frames: frameImages,
-    crops: cropImages,
-  }
-  const activeImages = tabImages[imageTab]
+  const activeImages = selectedRawImages
+
+  const rawSources = useMemo(() => {
+    const map = {}
+    for (const url of importedImages) {
+      const match = url.match(/\/uploads\/raw-images\/([^/]+)\//)
+      if (!match) continue
+      const source = match[1]
+      if (!map[source]) map[source] = { source, batch: `raw-images/${source}`, previews: [] }
+      if (map[source].previews.length < 1) map[source].previews.push(url)
+    }
+    return Object.values(map).sort((a, b) => a.source.localeCompare(b.source))
+  }, [importedImages])
 
   const IMAGES_PER_PAGE = 50
   const pageCount = Math.max(
@@ -569,6 +590,41 @@ function App() {
     setRemoveVideoMode(false)
     if (failed === 0) {
       setStatus(`Deleted ${deleted} video${deleted === 1 ? '' : 's'}`)
+    } else {
+      setStatus(`Deleted ${deleted}, failed ${failed}`)
+    }
+  }
+
+  const doDeleteSelectedRaws = async () => {
+    if (selectedRawsToRemove.size === 0) return
+    setConfirmingRemoveRaws(false)
+    let deleted = 0
+    let failed = 0
+    for (const batch of selectedRawsToRemove) {
+      try {
+        const response = await fetch(
+          `/api/batches/${encodeURIComponent(batch)}`,
+          { method: 'DELETE' },
+        )
+        if (response.ok) {
+          deleted += 1
+        } else {
+          failed += 1
+        }
+      } catch {
+        failed += 1
+      }
+    }
+    if (deleted > 0) {
+      setSelectedRaw(null)
+      setSelectedRawImages([])
+      fetchImages()
+      fetchBatches()
+    }
+    setSelectedRawsToRemove(new Set())
+    setRemoveRawMode(false)
+    if (failed === 0) {
+      setStatus(`Deleted ${deleted} raw image batch${deleted === 1 ? '' : 'es'}`)
     } else {
       setStatus(`Deleted ${deleted}, failed ${failed}`)
     }
@@ -691,6 +747,39 @@ function App() {
     }
   }
 
+  const doGenerateRaw = async () => {
+    if (!selectedRaw || rawGenerating) return
+    setRawGenerating(true)
+    setStatus('Generating...')
+    try {
+      const response = await fetch(
+        `/api/raw-images/${encodeURIComponent(`raw-images/${selectedRaw}`)}/generate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'crops',
+            margin: rawCropMargin,
+            classes: rawSelectedClasses.join(','),
+            confidence: rawConfidence / 100,
+          }),
+        },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(`Generated ${data.count} images`)
+        fetchImages()
+        fetchRawImages(`raw-images/${selectedRaw}`)
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Generation failed'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setRawGenerating(false)
+    }
+  }
+
   const fetchImages = async (batch = null) => {
     const url = batch
       ? `/api/images?batch=${encodeURIComponent(batch)}`
@@ -701,6 +790,19 @@ function App() {
       setImportedImages(data.imported ?? [])
       setFrameImages(data.frames ?? [])
       setCropImages(data.crops ?? [])
+      setImagePage(0)
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const fetchRawImages = async (source) => {
+    try {
+      const response = await fetch(
+        `/api/images?batch=${encodeURIComponent(source)}`,
+      )
+      const data = await response.json()
+      setSelectedRawImages(data.imported ?? [])
       setImagePage(0)
     } catch {
       setStatus('Failed: could not reach the server')
@@ -1236,6 +1338,70 @@ function App() {
     }
   }
 
+  const doAssignBatchToDataset = async () => {
+    if (!activeDataset || !assignToDatasetBatch) return
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/assign`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batch: assignToDatasetBatch }),
+        },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(`Assigned ${data.batch} to ${data.dataset}`)
+        setAssignToDatasetOpen(false)
+        setAssignToDatasetBatch('')
+        fetchDatasets()
+        openDataset(activeDataset)
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const doCreateDataset = async () => {
+    const name = createDatasetName.trim()
+    if (!name) return
+    try {
+      const createRes = await fetch('/api/datasets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      const createData = await createRes.json()
+      if (!createRes.ok) {
+        setStatus(`Failed: ${createData.detail ?? 'Unknown error'}`)
+        return
+      }
+      if (createDatasetTemplate) {
+        const templateRes = await fetch(
+          `/api/datasets/${encodeURIComponent(name)}/template`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ template: createDatasetTemplate }),
+          },
+        )
+        if (!templateRes.ok) {
+          setStatus(`Created ${name}, but failed to set template`)
+          return
+        }
+      }
+      setCreateDatasetName('')
+      setCreateDatasetTemplate('')
+      setCreateDatasetOpen(false)
+      setStatus(`Created dataset ${createData.dataset}`)
+      fetchDatasets()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
   const doDeleteBatch = async () => {
     if (!selectedBatch) return
     setStatus(`Deleting batch ${selectedBatch}...`)
@@ -1345,23 +1511,23 @@ function App() {
     event.target.value = ''
   }
 
-  const handleTarChange = async (event) => {
+  const handleImageChange = async (event) => {
     const file = event.target.files?.[0]
     if (!file) return
 
     const formData = new FormData()
     formData.append('file', file)
 
-    setStatus('Extracting tar...')
+    setStatus('Uploading image...')
     try {
-      const response = await fetch('/api/upload/tar', {
+      const response = await fetch('/api/upload/image', {
         method: 'POST',
         body: formData,
       })
       const data = await response.json()
       if (response.ok) {
         setStatus(
-          `Extracted batch ${data.batch}: ${data.image_count} images, ${data.video_count} videos`,
+          `Uploaded batch ${data.batch}: ${data.image_count} images, ${data.video_count} videos`,
         )
         fetchVideos()
         fetchImages()
@@ -1426,22 +1592,6 @@ function App() {
             >
               Datasets
             </button>
-            <div className="mx-2 h-6 w-px bg-slate-300" />
-            <input
-              ref={tarInputRef}
-              type="file"
-              accept=".tar,.tar.gz,.tgz,.tar.bz2,.tar.xz"
-              className="hidden"
-              onChange={handleTarChange}
-            />
-            <button
-              type="button"
-              onClick={() => tarInputRef.current?.click()}
-              className="flex items-center gap-2 rounded-full bg-slate-800 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-slate-700"
-            >
-              <ArchiveIcon className="h-4 w-4" />
-              Upload Tar
-            </button>
           </div>
         </header>
 
@@ -1463,48 +1613,51 @@ function App() {
               />
               <button
                 type="button"
+                disabled={removeVideoMode}
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600"
+                className="flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <UploadIcon className="h-4 w-4" />
                 Upload Video
               </button>
-              {!removeVideoMode ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRemoveVideoMode(true)
-                    setSelectedVideosToRemove(new Set())
-                  }}
-                  className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600"
-                >
-                  Remove videos
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingRemoveVideos(true)}
-                    disabled={selectedVideosToRemove.size === 0}
-                    className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600 disabled:opacity-40"
-                  >
-                    Delete {selectedVideosToRemove.size} video{selectedVideosToRemove.size === 1 ? '' : 's'}
-                  </button>
+              {videos.length > 0 ? (
+                !removeVideoMode ? (
                   <button
                     type="button"
                     onClick={() => {
-                      setRemoveVideoMode(false)
+                      setRemoveVideoMode(true)
                       setSelectedVideosToRemove(new Set())
                     }}
-                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                    className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600"
                   >
-                    Cancel
+                    Remove videos
                   </button>
-                </>
-              )}
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingRemoveVideos(true)}
+                      disabled={selectedVideosToRemove.size === 0}
+                      className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600 disabled:opacity-40"
+                    >
+                      Delete {selectedVideosToRemove.size} video{selectedVideosToRemove.size === 1 ? '' : 's'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRemoveVideoMode(false)
+                        setSelectedVideosToRemove(new Set())
+                      }}
+                      className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                )
+              ) : null}
             </div>
           </div>
-          <div className="mt-4 flex max-w-full gap-3 overflow-x-auto overscroll-x-contain pb-3">
+          <div className="mt-4 flex max-w-full gap-3 overflow-x-auto overscroll-x-contain p-3">
             {videos.map((video) => (
               <VideoThumb
                 key={video.filename}
@@ -1742,287 +1895,255 @@ function App() {
 
         {activePage === 'raw_image' && (
         <section className="mt-6 rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
-          <div className="flex items-baseline gap-3">
-            <h2 className="text-lg font-semibold text-slate-800">Images</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-slate-800">Raw Images</h2>
             <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-              {activeImages.length}
+              {rawSources.length}
             </span>
-          </div>
-          <div className="mt-4 flex items-center gap-3">
-            <div className="flex gap-1 rounded-full bg-slate-200/70 p-1">
-              {[
-                {
-                  key: 'imported',
-                  label: `Imported (${importedImages.length})`,
-                },
-                { key: 'frames', label: `Frames (${frameImages.length})` },
-                { key: 'crops', label: `Crops (${cropImages.length})` },
-              ].map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => {
-                    setImageTab(tab.key)
-                    setImagePage(0)
-                    setMarkedForRemoval(new Set())
-                    if (tab.key !== 'imported') {
-                      setSelectedBatch(null)
-                    } else {
-                      fetchImages(selectedBatch)
-                    }
-                  }}
-                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                    imageTab === tab.key
-                      ? 'bg-white text-slate-800 shadow'
-                      : 'text-slate-500 hover:text-slate-700'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            {imageTab === 'imported' && batches.length > 0 && (
-              <select
-                value={selectedBatch ?? ''}
-                onChange={(e) => {
-                  const batch = e.target.value || null
-                  setSelectedBatch(batch)
-                  fetchImages(batch)
-                }}
-                className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 shadow-sm"
-              >
-                <option value="">All batches</option>
-                {batches.map((batch, i) => (
-                  <option key={batch} value={batch}>
-                    Batch {i + 1} ({batch})
-                  </option>
-                ))}
-              </select>
-            )}
-            {imageTab === 'imported' && selectedBatch && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setSplitConfirmOpen((v) => !v)}
-                  className="rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
-                >
-                  {selectedBatch ? 'Split this batch' : 'Split imports'}
-                </button>
-
-                {splitConfirmOpen && (
-                  <div className="absolute left-1/2 top-full z-20 mt-2 w-64 -translate-x-1/2 rounded-xl border border-white/10 bg-slate-900/95 p-3.5 shadow-2xl backdrop-blur-md">
-                    <button
-                      type="button"
-                      onClick={() => setSplitConfirmOpen(false)}
-                      className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-xs text-slate-300 hover:bg-slate-600 hover:text-white"
-                    >
-                      ×
-                    </button>
-                    <p className="pr-4 text-xs font-medium text-white">
-                      {selectedBatch
-                        ? `Split batch "${selectedBatch}" into how many batches?`
-                        : 'Split all loose imports into how many batches?'}
-                    </p>
-                    <label className="mt-3 flex items-center justify-between text-xs font-medium text-white">
-                      Number of batches
-                      <input
-                        type="number"
-                        min={1}
-                        value={splitCount}
-                        onChange={(e) =>
-                          setSplitCount(
-                            Math.max(1, Number(e.target.value) || 1),
-                          )
-                        }
-                        className="w-16 rounded border border-slate-500 bg-slate-700 px-1.5 py-1 text-xs text-white"
-                      />
-                    </label>
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setSplitConfirmOpen(false)}
-                        className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-600"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={doSplit}
-                        className="flex-1 rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-indigo-500/30 transition hover:bg-indigo-600"
-                      >
-                        Split
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            {imageTab === 'imported' && selectedBatch && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setAssignOpen((v) => !v)}
-                  className="rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
-                >
-                  Assign to dataset
-                </button>
-
-                {assignOpen && (
-                  <div className="absolute left-1/2 top-full z-30 mt-2 w-64 -translate-x-1/2 rounded-xl border border-white/10 bg-slate-900 p-3.5 shadow-2xl">
-                    <button
-                      type="button"
-                      onClick={() => setAssignOpen(false)}
-                      className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-xs text-slate-300 hover:bg-slate-600 hover:text-white"
-                    >
-                      ×
-                    </button>
-                    <p className="pr-4 text-xs font-medium text-white">
-                      Assign "{selectedBatch}" to a dataset
-                    </p>
-                    {datasets.length > 0 && (
-                      <label className="mt-3 block text-xs font-medium text-slate-300">
-                        Existing dataset
-                        <select
-                          value={selectedDataset}
-                          onChange={(e) => {
-                            setSelectedDataset(e.target.value)
-                            setNewDatasetName('')
-                          }}
-                          className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-1.5 py-1 text-xs text-white"
-                        >
-                          <option value="">-- or create new --</option>
-                          {datasets.map((d) => (
-                            <option key={d.name} value={d.name}>
-                              {d.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                    <label className="mt-3 block text-xs font-medium text-slate-300">
-                      New dataset name
-                      <input
-                        type="text"
-                        value={newDatasetName}
-                        onChange={(e) => {
-                          setNewDatasetName(e.target.value)
-                          setSelectedDataset('')
-                        }}
-                        placeholder="e.g. classroom"
-                        className="mt-1 w-full rounded border border-slate-500 bg-slate-700 px-1.5 py-1 text-xs text-white placeholder-slate-400"
-                      />
-                    </label>
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setAssignOpen(false)}
-                        className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-600"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={doAssignBatch}
-                        className="flex-1 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-emerald-500/30 transition hover:bg-emerald-600"
-                      >
-                        Assign
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            {imageTab === 'imported' && selectedBatch && (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setDeleteBatchConfirmOpen((v) => !v)}
-                  className="rounded-full border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-100"
-                >
-                  Delete batch
-                </button>
-
-                {deleteBatchConfirmOpen && (
-                  <div className="absolute left-1/2 top-full z-20 mt-2 w-64 -translate-x-1/2 rounded-xl border border-white/10 bg-slate-900 p-3.5 shadow-2xl">
-                    <button
-                      type="button"
-                      onClick={() => setDeleteBatchConfirmOpen(false)}
-                      className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-xs text-slate-300 hover:bg-slate-600 hover:text-white"
-                    >
-                      ×
-                    </button>
-                    <p className="pr-4 text-xs font-medium text-white">
-                      Delete batch "{selectedBatch}" and all its images?
-                      This cannot be undone.
-                    </p>
-                    <div className="mt-3 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setDeleteBatchConfirmOpen(false)}
-                        className="flex-1 rounded-lg border border-slate-600 bg-slate-700 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-600"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={doDeleteBatch}
-                        className="flex-1 rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-red-500/30 transition hover:bg-red-600"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            <input
+              ref={tarInputRef}
+              type="file"
+              accept=".tar,.tar.gz,.tgz,.tar.bz2,.tar.xz,.zip,.rar,.jpg,.jpeg,.png,.gif,.bmp,.webp"
+              className="hidden"
+              onChange={handleImageChange}
+            />
             <button
               type="button"
-              onClick={() => {
-                setModalIndex(null)
-                setRemoveIndex(null)
-                setRemoveMode(true)
-                setMarkedForRemoval(new Set())
-              }}
-              className="ml-auto flex items-center gap-2 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-red-500/30 transition hover:bg-red-600"
+              disabled={removeRawMode}
+              onClick={() => tarInputRef.current?.click()}
+              className="ml-auto flex items-center gap-2 rounded-full bg-slate-800 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
-                className="h-4 w-4"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
-                />
-              </svg>
-              Remove Mode
+              <ArchiveIcon className="h-4 w-4" />
+              Upload Image
             </button>
+            {rawSources.length > 0 ? (
+              !removeRawMode ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRemoveRawMode(true)
+                    setSelectedRawsToRemove(new Set())
+                  }}
+                  className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600"
+                >
+                  Remove raw images
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingRemoveRaws(true)}
+                    disabled={selectedRawsToRemove.size === 0}
+                    className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-red-600 disabled:opacity-40"
+                  >
+                    Delete {selectedRawsToRemove.size} raw image
+                    {selectedRawsToRemove.size === 1 ? '' : 's'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRemoveRawMode(false)
+                      setSelectedRawsToRemove(new Set())
+                    }}
+                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                </>
+              )
+            ) : null}
           </div>
-          <div className="mt-4 grid grid-cols-6 gap-3">
-            {pageImages.map((image, index) => (
+          <div className="mt-4 flex max-w-full gap-3 overflow-x-auto overscroll-x-contain p-3">
+            {rawSources.map(({ source, batch, previews }) => (
               <button
-                key={image}
+                key={source}
                 type="button"
-                onClick={() =>
-                  setModalIndex(imagePage * IMAGES_PER_PAGE + index)
-                }
-                className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
+                onClick={() => {
+                  if (removeRawMode) {
+                    setSelectedRawsToRemove((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(batch)) {
+                        next.delete(batch)
+                      } else {
+                        next.add(batch)
+                      }
+                      return next
+                    })
+                  } else {
+                    setSelectedRaw(source)
+                    setImagePage(0)
+                    fetchRawImages(batch)
+                  }
+                }}
+                className={`group relative aspect-video w-40 shrink-0 overflow-hidden rounded-lg shadow-sm transition hover:shadow-md ${
+                  selectedRaw === source && !removeRawMode
+                    ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-white'
+                    : ''
+                } ${
+                  selectedRawsToRemove.has(batch)
+                    ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-white'
+                    : ''
+                }`}
               >
                 <img
-                  src={`/api${image}`}
-                  alt=""
-                  className="aspect-video w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105"
+                  src={`/api${previews[0]}`}
+                alt=""
+                  className="absolute inset-0 h-full w-full object-cover"
                 />
+                {removeRawMode && (
+                  <div
+                    className={`absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white text-sm font-bold shadow ${
+                      selectedRawsToRemove.has(batch)
+                        ? 'bg-red-500 text-white'
+                        : 'bg-white/50 text-transparent'
+                    }`}
+                  >
+                    ✓
+                  </div>
+                )}
+                <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 text-left text-xs font-medium text-white">
+                  {source}
+                </div>
               </button>
             ))}
           </div>
+          {selectedRaw && (
+            <div className="mt-6">
+              <div className="flex items-baseline gap-3">
+                <h3 className="text-base font-semibold text-slate-800">
+                  {selectedRaw}
+                </h3>
+                <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                  {selectedRawImages.length}
+                </span>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/60 bg-white/70 p-5 shadow-sm backdrop-blur-sm">
+                <h4 className="text-base font-semibold text-slate-800">
+                  Menu generate image
+                </h4>
+
+                <div className="mt-4 flex flex-wrap items-center gap-4">
+                  <label className="text-xs font-medium text-slate-700">
+                    Crop margin (px)
+                    <input
+                      type="number"
+                      min={0}
+                      max={200}
+                      value={rawCropMargin}
+                      onChange={(e) =>
+                        setRawCropMargin(
+                          Math.min(200, Math.max(0, Number(e.target.value) || 0)),
+                        )
+                      }
+                      className="mt-1 block w-20 rounded border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-800"
+                    />
+                  </label>
+
+                  <label className="text-xs font-medium text-slate-700">
+                    Confidence (%)
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={rawConfidence}
+                      onChange={(e) =>
+                        setRawConfidence(
+                          Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                        )
+                      }
+                      className="mt-1 block w-20 rounded border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-800"
+                    />
+                  </label>
+
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="text-xs font-medium text-slate-700">
+                      YOLO classes
+                    </span>
+                    <div className="flex w-full items-center gap-2">
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          const value = e.target.value
+                          if (value && !rawSelectedClasses.includes(value)) {
+                            setRawSelectedClasses((prev) => [...prev, value])
+                          }
+                          e.target.value = ''
+                        }}
+                        className="w-48 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800"
+                      >
+                        <option value="">Add a class</option>
+                        {yoloClasses
+                          .filter((cls) => !rawSelectedClasses.includes(cls))
+                          .map((cls) => (
+                            <option key={cls} value={cls}>
+                              {cls}
+                            </option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={doGenerateRaw}
+                        disabled={
+                          rawGenerating || rawSelectedClasses.length === 0
+                        }
+                        className="rounded-lg bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-indigo-600 disabled:opacity-50"
+                      >
+                        {rawGenerating ? 'Generating...' : 'Generate'}
+                      </button>
+                      {rawSelectedClasses.length > 0 ? (
+                        <div className="ml-auto flex flex-wrap justify-end gap-2">
+                          {rawSelectedClasses.map((cls) => (
+                            <span
+                              key={cls}
+                              className="flex items-center gap-2 rounded-full bg-indigo-100 px-3 py-1.5 text-sm font-semibold text-indigo-700"
+                            >
+                              {cls}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRawSelectedClasses((prev) =>
+                                    prev.filter((c) => c !== cls),
+                                  )
+                                }
+                                className="text-indigo-700 hover:text-indigo-900"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-slate-400">
+                          Pick at least one class
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-6 gap-3 rounded-2xl border border-white/60 bg-white/70 p-3 shadow-sm backdrop-blur-sm">
+                {pageImages.map((image, index) => (
+                  <button
+                    key={image}
+                    type="button"
+                    onClick={() =>
+                      setModalIndex(imagePage * IMAGES_PER_PAGE + index)
+                    }
+                    className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
+                  >
+                    <img
+                      src={`/api${image}`}
+                      alt=""
+                      className="aspect-video w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105"
+                    />
+                  </button>
+                ))}
+              </div>
           {activeImages.length === 0 && (
             <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
-              No {imageTab} yet
+              No images yet
             </div>
           )}
           {pageCount > 1 && (
@@ -2051,6 +2172,8 @@ function App() {
               </button>
             </div>
           )}
+          </div>
+          )}
         </section>
         )}
 
@@ -2062,7 +2185,20 @@ function App() {
                 {datasets.length}
               </span>
               <div className="ml-auto flex items-center gap-2">
-                {!removeDatasetMode ? (
+                {!removeDatasetMode && !createDatasetOpen && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreateDatasetOpen(true)
+                      setCreateDatasetName('')
+                      setCreateDatasetTemplate('')
+                    }}
+                    className="flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-emerald-600"
+                  >
+                    New dataset
+                  </button>
+                )}
+                {!removeDatasetMode && !createDatasetOpen && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2073,7 +2209,8 @@ function App() {
                   >
                     Remove datasets
                   </button>
-                ) : (
+                )}
+                {removeDatasetMode && (
                   <>
                     <button
                       type="button"
@@ -2166,28 +2303,14 @@ function App() {
                           ? ''
                           : 'es'}
                       </p>
-                      <label
-                        className="mt-2 block text-xs text-slate-500"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        Model
-                        <select
-                          value={d.template ?? ''}
-                          onChange={(e) =>
-                            doSetTemplate(d.name, e.target.value)
-                          }
-                          className="mt-1 w-full rounded border border-slate-300 px-1.5 py-1 text-xs text-slate-700"
-                        >
-                          <option value="" disabled>
-                            -- choose model --
-                          </option>
-                          {templates.map((t) => (
-                            <option key={t.name} value={t.name}>
-                              {t.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      <p className="mt-2 text-xs text-slate-500">
+                        Model:{' '}
+                        <span className="font-medium text-slate-700">
+                          {templates.find((t) => t.name === d.template)?.label ??
+                            d.template ??
+                            'Not set'}
+                        </span>
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2229,6 +2352,16 @@ function App() {
                     className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
                   >
                     Annotate{datasetBatchFilter ? ` (${datasetBatchFilter})` : ''}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAssignToDatasetBatch(batches[0] ?? '')
+                      setAssignToDatasetOpen(true)
+                    }}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
+                  >
+                    Assign batch
                   </button>
                   <button
                     type="button"
@@ -2686,7 +2819,7 @@ function App() {
               ))}
               {activeImages.length === 0 && (
                 <p className="col-span-6 text-sm text-slate-400">
-                  No {imageTab} yet.
+                  No images yet.
                 </p>
               )}
             </div>
@@ -2781,6 +2914,16 @@ function App() {
         />
       )}
 
+      {confirmingRemoveRaws && (
+        <ConfirmModal
+          count={selectedRawsToRemove.size}
+          title={`Delete ${selectedRawsToRemove.size} raw image batch${selectedRawsToRemove.size === 1 ? '' : 'es'}?`}
+          message="This will permanently remove the selected raw image batches and all their images. This action cannot be undone."
+          onCancel={() => setConfirmingRemoveRaws(false)}
+          onConfirm={doDeleteSelectedRaws}
+        />
+      )}
+
       {confirmingRemoveDatasets && (
         <ConfirmModal
           count={selectedDatasetsToRemove.size}
@@ -2789,6 +2932,141 @@ function App() {
           onCancel={() => setConfirmingRemoveDatasets(false)}
           onConfirm={doRemoveDatasets}
         />
+      )}
+
+      {createDatasetOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => {
+            setCreateDatasetOpen(false)
+            setCreateDatasetName('')
+            setCreateDatasetTemplate('')
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-slate-800">New Dataset</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Enter a name and pick a model template.
+            </p>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  value={createDatasetName}
+                  onChange={(e) => setCreateDatasetName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') doCreateDataset()
+                  }}
+                  placeholder="my-dataset"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-700">
+                  Model template
+                </label>
+                <select
+                  value={createDatasetTemplate}
+                  onChange={(e) => setCreateDatasetTemplate(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                >
+                  <option value="">No template</option>
+                  {templates.map((t) => (
+                    <option key={t.name} value={t.name}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setCreateDatasetOpen(false)
+                  setCreateDatasetName('')
+                  setCreateDatasetTemplate('')
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doCreateDataset}
+                disabled={!createDatasetName.trim()}
+                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {assignToDatasetOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => {
+            setAssignToDatasetOpen(false)
+            setAssignToDatasetBatch('')
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-slate-800">
+              Assign batch to {activeDataset}
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Select an import or video-extracted batch to add.
+            </p>
+            <div className="mt-4">
+              {batches.length === 0 ? (
+                <p className="text-sm text-slate-500">No batches available.</p>
+              ) : (
+                <select
+                  value={assignToDatasetBatch}
+                  onChange={(e) => setAssignToDatasetBatch(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+                >
+                  {batches.map((batch) => (
+                    <option key={batch} value={batch}>
+                      {batch}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setAssignToDatasetOpen(false)
+                  setAssignToDatasetBatch('')
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doAssignBatchToDataset}
+                disabled={!assignToDatasetBatch || batches.length === 0}
+                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
+              >
+                Assign
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

@@ -5,10 +5,12 @@ import re
 import shutil
 import subprocess
 import tarfile
+import zipfile
 import tempfile
 import threading
 import uuid
 from pathlib import Path
+from urllib.parse import unquote
 
 import yaml
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -28,16 +30,13 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = BASE_DIR / "uploads"
-CROPS_DIR = UPLOADS_DIR / "crops"
-IMPORTS_DIR = UPLOADS_DIR / "imports"
+RAW_IMAGES_DIR = UPLOADS_DIR / "raw-images"
 VIDEOS_DIR = UPLOADS_DIR / "videos"
-THUMBNAILS_DIR = VIDEOS_DIR / "thumbnails"
-FRAMES_DIR = UPLOADS_DIR / "frames"
 DATASETS_DIR = BASE_DIR / "datasets"
 DATASETS_FILE = DATASETS_DIR / "datasets.json"
 TEMPLATES_DIR = BASE_DIR / "template"
 
-for directory in (CROPS_DIR, IMPORTS_DIR, VIDEOS_DIR, THUMBNAILS_DIR, FRAMES_DIR, DATASETS_DIR):
+for directory in (RAW_IMAGES_DIR, VIDEOS_DIR, DATASETS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
@@ -71,22 +70,34 @@ def atomic_write_json(path: Path, data):
         raise
 
 
-def next_batch_name():
+def next_raw_images_name():
+    RAW_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     numbers = [
         int(m.group(1))
-        for d in IMPORTS_DIR.iterdir()
-        if d.is_dir() and (m := re.fullmatch(r"batch-(\d+)", d.name))
+        for d in RAW_IMAGES_DIR.iterdir()
+        if d.is_dir() and (m := re.fullmatch(r"raw-images-(\d+)", d.name))
     ]
-    return f"batch-{max(numbers, default=0) + 1}"
+    return f"raw-images-{max(numbers, default=0) + 1}"
 
 
 def next_video_name():
+    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
     numbers = [
         int(m.group(1))
         for d in VIDEOS_DIR.iterdir()
         if d.is_dir() and (m := re.fullmatch(r"video-(\d+)", d.name))
     ]
     return f"video-{max(numbers, default=0) + 1}"
+
+
+def next_batch_name(parent: Path):
+    parent.mkdir(parents=True, exist_ok=True)
+    numbers = [
+        int(m.group(1))
+        for d in parent.iterdir()
+        if d.is_dir() and (m := re.fullmatch(r"batch-(\d+)(?:-(?:frames|crops))?", d.name))
+    ]
+    return f"batch-{max(numbers, default=0) + 1}"
 
 
 def _image_extensions(path: Path | None = None):
@@ -101,12 +112,13 @@ def _image_extensions(path: Path | None = None):
 
 
 def batch_first_image(batch: str):
-    batch_dir = IMPORTS_DIR / batch
-    if not batch_dir.is_dir():
+    batch_dir = (UPLOADS_DIR / batch).resolve()
+    if not batch_dir.is_dir() or not batch_dir.is_relative_to(UPLOADS_DIR):
         return None
     for f in sorted(batch_dir.iterdir()):
         if f.is_file() and f.suffix.lower() in _image_extensions(path=f):
-            return f"/uploads/imports/{batch}/{f.name}"
+            rel = f.relative_to(UPLOADS_DIR)
+            return f"/uploads/{rel}"
     return None
 
 
@@ -231,52 +243,109 @@ def make_thumbnail(video_path: Path, batch: str):
 
 
 @app.post("/upload/tar")
-async def upload_tar(file: UploadFile = File(...)):
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in {".tar", ".gz", ".tgz", ".bz2", ".xz"}:
-        raise HTTPException(status_code=400, detail="File must be a tar archive")
+def _process_uploaded_files(tmp_path: Path):
+    batch_name = next_batch_name(RAW_IMAGES_DIR)
+    batch_dir = RAW_IMAGES_DIR / batch_name
+    batch_dir.mkdir(parents=True)
 
     saved_images = []
     saved_videos = []
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        try:
-            with tarfile.open(fileobj=file.file) as tar:
-                tar.extractall(tmp_path, filter="data")
-        except tarfile.TarError:
-            raise HTTPException(status_code=400, detail="Invalid tar archive")
-
-        batch_name = next_batch_name()
-        batch_dir = IMPORTS_DIR / batch_name
-        batch_dir.mkdir(parents=True)
-
-        for item in sorted(tmp_path.rglob("*")):
-            if not item.is_file() or item.name.startswith("._"):
-                continue
-            ext = item.suffix.lower()
-            if ext in IMAGE_EXTENSIONS:
-                dest = batch_dir / item.name
-                if dest.exists():
-                    dest = batch_dir / f"{uuid.uuid4().hex}_{item.name}"
-                shutil.move(str(item), dest)
-                saved_images.append(
-                    f"/uploads/imports/{batch_name}/{dest.name}"
-                )
-            elif ext in VIDEO_EXTENSIONS:
-                dest = VIDEOS_DIR / item.name
-                if dest.exists():
-                    dest = VIDEOS_DIR / f"{uuid.uuid4().hex}_{item.name}"
-                shutil.move(str(item), dest)
-                make_thumbnail(dest)
-                saved_videos.append(f"/uploads/videos/{dest.name}")
+    image_index = 1
+    for item in sorted(tmp_path.rglob("*")):
+        if not item.is_file() or item.name.startswith("._"):
+            continue
+        ext = item.suffix.lower()
+        if ext in IMAGE_EXTENSIONS:
+            dest = batch_dir / f"raw-image-{batch_name}-{image_index}{ext}"
+            while dest.exists():
+                image_index += 1
+                dest = batch_dir / f"raw-image-{batch_name}-{image_index}{ext}"
+            shutil.move(str(item), dest)
+            image_index += 1
+            saved_images.append(f"/uploads/raw-images/{batch_name}/{dest.name}")
+        elif ext in VIDEO_EXTENSIONS:
+            video_name = next_video_name()
+            video_dir = VIDEOS_DIR / video_name
+            video_dir.mkdir(parents=True)
+            (video_dir / "imgs").mkdir(parents=True)
+            dest = video_dir / f"{video_name}{ext}"
+            shutil.move(str(item), dest)
+            make_thumbnail(dest, video_name)
+            saved_videos.append(f"/uploads/videos/{video_name}/{video_name}{ext}")
 
     return {
-        "batch": batch_name,
+        "batch": f"raw-images/{batch_name}",
         "images": saved_images,
         "videos": saved_videos,
         "image_count": len(saved_images),
         "video_count": len(saved_videos),
     }
+
+
+@app.post("/upload/image")
+async def upload_image(file: UploadFile = File(...)):
+    filename = file.filename or ""
+    lowered = filename.lower()
+
+    if any(
+        lowered.endswith(ext)
+        for ext in (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz")
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            try:
+                with tarfile.open(fileobj=file.file) as tar:
+                    tar.extractall(tmp_path, filter="data")
+            except tarfile.TarError:
+                raise HTTPException(status_code=400, detail="Invalid tar archive")
+            return _process_uploaded_files(tmp_path)
+
+    if lowered.endswith(".zip"):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            try:
+                with zipfile.ZipFile(file.file) as zf:
+                    zf.extractall(tmp_path)
+            except zipfile.BadZipFile:
+                raise HTTPException(status_code=400, detail="Invalid zip archive")
+            return _process_uploaded_files(tmp_path)
+
+    if lowered.endswith(".rar"):
+        try:
+            import rarfile
+        except ImportError:
+            raise HTTPException(
+                status_code=400,
+                detail="RAR support not installed (pip install rarfile)",
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            try:
+                with rarfile.RarFile(file.file) as rf:
+                    rf.extractall(tmp_path)
+            except rarfile.Error:
+                raise HTTPException(status_code=400, detail="Invalid rar archive")
+            return _process_uploaded_files(tmp_path)
+
+    ext = Path(filename).suffix.lower()
+    if ext in IMAGE_EXTENSIONS:
+        batch_name = next_batch_name(RAW_IMAGES_DIR)
+        batch_dir = RAW_IMAGES_DIR / batch_name
+        batch_dir.mkdir(parents=True)
+        dest = batch_dir / f"raw-image-{batch_name}-1{ext}"
+        while dest.exists():
+            dest = batch_dir / f"raw-image-{batch_name}-{uuid.uuid4().hex[:8]}{ext}"
+        content = await file.read()
+        dest.write_bytes(content)
+        return {
+            "batch": f"raw-images/{batch_name}",
+            "images": [f"/uploads/raw-images/{batch_name}/{dest.name}"],
+            "videos": [],
+            "image_count": 1,
+            "video_count": 0,
+        }
+
+    raise HTTPException(status_code=400, detail="Unsupported file type")
 
 
 @app.get("/videos")
@@ -294,7 +363,7 @@ def list_videos():
         batch_count = sum(
             1
             for batch_dir in imgs_dir.iterdir()
-            if batch_dir.is_dir() and re.fullmatch(r"batch-\d+", batch_dir.name)
+            if batch_dir.is_dir() and re.fullmatch(r"batch-\d+(?:-(?:frames|crops))?", batch_dir.name)
         ) if imgs_dir.is_dir() else 0
         videos.append(
             {
@@ -341,10 +410,6 @@ def delete_video(filename: str):
     if not video_dir.is_dir():
         raise HTTPException(status_code=404, detail="Video not found")
 
-    for import_batch in IMPORTS_DIR.iterdir():
-        if import_batch.is_dir() and import_batch.name.startswith(f"{filename}-"):
-            shutil.rmtree(import_batch)
-
     if video_dir.exists():
         shutil.rmtree(video_dir)
     return {"deleted": filename}
@@ -356,10 +421,8 @@ def delete_video_batch(filename: str, batch_name: str):
         raise HTTPException(status_code=400, detail="Invalid filename")
     if any(c in batch_name for c in ("/", "\\", "..")):
         raise HTTPException(status_code=400, detail="Invalid batch name")
-    match = re.fullmatch(r"batch-(\d+)", batch_name)
-    if not match:
+    if not re.fullmatch(r"batch-\d+(?:-(?:frames|crops))?", batch_name):
         raise HTTPException(status_code=400, detail="Invalid batch name")
-    batch_number = match.group(1)
 
     video_dir = VIDEOS_DIR / filename
     if not video_dir.is_dir():
@@ -368,13 +431,6 @@ def delete_video_batch(filename: str, batch_name: str):
     batch_dir = video_dir / "imgs" / batch_name
     if batch_dir.is_dir():
         shutil.rmtree(batch_dir)
-
-    for import_batch in IMPORTS_DIR.iterdir():
-        if (
-            import_batch.is_dir()
-            and import_batch.name.startswith(f"{filename}-{batch_number}-")
-        ):
-            shutil.rmtree(import_batch)
 
     return {"deleted": batch_name}
 
@@ -430,14 +486,8 @@ def extract_frames(
         if d.is_dir() and (m := re.fullmatch(r"batch-(\d+)", d.name))
     ]
     batch_number = max(existing_numbers, default=0) + 1
-    imgs_batch_dir = imgs_dir / f"batch-{batch_number}"
+    imgs_batch_dir = imgs_dir / f"batch-{batch_number}-{mode}"
     imgs_batch_dir.mkdir(parents=True)
-
-    output_batch = f"{video_name}-{batch_number}-{mode}"
-    output_dir = IMPORTS_DIR / output_batch
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    output_dir.mkdir(parents=True)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -477,12 +527,11 @@ def extract_frames(
                     if not found:
                         continue
                 frame_index += 1
-                name = f"batch-{batch_number}-{frame_index:04d}.jpg"
-                dest = output_dir / name
+                name = f"video-batch-{batch_number}-{frame_index:04d}.jpg"
+                dest = imgs_batch_dir / name
                 img = Image.open(frame)
                 img.save(dest, "JPEG", quality=95)
-                shutil.copy2(dest, imgs_batch_dir / name)
-                frame_urls.append(f"/uploads/imports/{output_batch}/{name}")
+                frame_urls.append(f"/uploads/videos/{filename}/imgs/{imgs_batch_dir.name}/{name}")
             return {
                 "frames_per_minute": frames_per_minute,
                 "count": len(frame_urls),
@@ -519,11 +568,10 @@ def extract_frames(
                 y2 = min(h, y2 + margin)
                 crop = image.crop((x1, y1, x2, y2))
                 crop_index += 1
-                name = f"batch-{batch_number}-{crop_index:04d}.jpg"
-                dest = output_dir / name
+                name = f"video-batch-{batch_number}-{crop_index:04d}.jpg"
+                dest = imgs_batch_dir / name
                 crop.save(dest, "JPEG", quality=95)
-                shutil.copy2(dest, imgs_batch_dir / name)
-                crop_urls.append(f"/uploads/imports/{output_batch}/{name}")
+                crop_urls.append(f"/uploads/videos/{filename}/imgs/{imgs_batch_dir.name}/{name}")
 
     return {
         "frames_per_minute": frames_per_minute,
@@ -532,12 +580,97 @@ def extract_frames(
     }
 
 
+@app.post("/raw-images/{source:path}/generate")
+def generate_raw_images(source: str, payload: dict):
+    mode = payload.get("mode", "use")
+    if mode not in ("use", "crops"):
+        raise HTTPException(status_code=400, detail="mode must be 'use' or 'crops'")
+    margin = max(0, int(payload.get("margin", 0)))
+    classes = payload.get("classes", "")
+    confidence = float(payload.get("confidence", 0.7))
+
+    source_dir = (UPLOADS_DIR / source).resolve()
+    if (
+        not source_dir.is_dir()
+        or not source_dir.is_relative_to(UPLOADS_DIR.resolve())
+    ):
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    imgs_dir = source_dir / "imgs"
+    batch_name = next_batch_name(imgs_dir)
+    if mode == "crops":
+        batch_dir = imgs_dir / f"{batch_name}-crops"
+    else:
+        batch_dir = imgs_dir / batch_name
+    batch_dir.mkdir(parents=True)
+
+    files = [
+        p
+        for p in source_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in _image_extensions()
+    ]
+    if not files:
+        return {"count": 0, "images": []}
+
+    selected_classes = {c.strip() for c in classes.split(",") if c.strip()}
+    urls = []
+
+    if mode == "use":
+        for f in files:
+            dest = batch_dir / f.name
+            if dest.exists():
+                dest = batch_dir / f"{uuid.uuid4().hex}_{f.name}"
+            shutil.copy2(f, dest)
+            urls.append(f"/uploads/{dest.relative_to(UPLOADS_DIR)}")
+        return {"count": len(urls), "images": urls}
+
+    model = get_model()
+    crop_index = 0
+    for img_path in files:
+        image = Image.open(img_path)
+        results = model(str(img_path), verbose=False)
+        boxes = results[0].boxes if results else None
+        if boxes is None or len(boxes) == 0:
+            continue
+        for box, conf, cls in zip(
+            boxes.xyxy.tolist(),
+            boxes.conf.tolist(),
+            boxes.cls.tolist(),
+        ):
+            if conf <= confidence:
+                continue
+            if (
+                selected_classes
+                and model.names[int(cls)] not in selected_classes
+            ):
+                continue
+            x1, y1, x2, y2 = (int(v) for v in box)
+            w, h = image.size
+            x1 = max(0, x1 - margin)
+            y1 = max(0, y1 - margin)
+            x2 = min(w, x2 + margin)
+            y2 = min(h, y2 + margin)
+            crop = image.crop((x1, y1, x2, y2))
+            crop_index += 1
+            name = f"{batch_name}-{crop_index:04d}.jpg"
+            dest = batch_dir / name
+            crop.save(dest, "JPEG", quality=95)
+            urls.append(f"/uploads/{dest.relative_to(UPLOADS_DIR)}")
+
+    return {"count": len(urls), "images": urls}
+
+
 @app.post("/split-imports")
 def split_imports(payload: dict):
     count = max(1, int(payload.get("count", 2)))
     source = payload.get("source")
-    source_dir = IMPORTS_DIR / source if source else IMPORTS_DIR
-    if not source_dir.exists():
+    if not source:
+        raise HTTPException(status_code=400, detail="Source batch required")
+    source_dir = (UPLOADS_DIR / source).resolve()
+    if (
+        not source_dir.is_dir()
+        or not source_dir.is_relative_to(UPLOADS_DIR.resolve())
+    ):
         raise HTTPException(status_code=404, detail="Source batch not found")
 
     files = [p for p in source_dir.iterdir() if p.is_file()]
@@ -545,12 +678,13 @@ def split_imports(payload: dict):
         return {"moved": 0, "batches": []}
 
     n = min(count, len(files))
+    parent = source_dir.parent
     batch_dirs = []
     for i in range(n):
-        name = f"{source_dir.name}-{i + 1}" if source else next_batch_name()
-        batch_dir = IMPORTS_DIR / name
+        name = f"{source_dir.name}-{i + 1}"
+        batch_dir = parent / name
         if batch_dir.exists():
-            batch_dir = IMPORTS_DIR / f"{name}-{uuid.uuid4().hex[:4]}"
+            batch_dir = parent / f"{name}-{uuid.uuid4().hex[:4]}"
         batch_dir.mkdir(parents=True)
         batch_dirs.append(batch_dir)
 
@@ -561,21 +695,22 @@ def split_imports(payload: dict):
             dest = target_dir / f"{uuid.uuid4().hex}_{file.name}"
         file.rename(dest)
 
-    if source and source_dir.is_dir() and not any(source_dir.iterdir()):
+    if source_dir.is_dir() and not any(source_dir.iterdir()):
         source_dir.rmdir()
 
     return {
         "moved": len(files),
-        "batches": [d.name for d in batch_dirs],
+        "batches": [str(d.relative_to(UPLOADS_DIR)) for d in batch_dirs],
     }
 
 
-@app.delete("/batches/{name}")
+@app.delete("/batches/{name:path}")
 def delete_batch(name: str):
-    batch_dir = (IMPORTS_DIR / name).resolve()
+    name = unquote(name)
+    batch_dir = (UPLOADS_DIR / name).resolve()
     if (
-        not batch_dir.is_relative_to(IMPORTS_DIR.resolve())
-        or batch_dir == IMPORTS_DIR.resolve()
+        not batch_dir.is_relative_to(UPLOADS_DIR.resolve())
+        or batch_dir == UPLOADS_DIR.resolve()
         or not batch_dir.is_dir()
     ):
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -695,11 +830,13 @@ def get_dataset_images(name: str):
         raise HTTPException(status_code=404, detail="Dataset not found")
     images = []
     for batch in datasets[name].get("batches", []):
-        batch_dir = IMPORTS_DIR / batch
-        if batch_dir.is_dir():
-            for f in sorted(batch_dir.iterdir()):
-                if f.is_file() and f.suffix.lower() in _image_extensions(path=f):
-                    images.append(f"/uploads/imports/{batch}/{f.name}")
+        batch_dir = (UPLOADS_DIR / batch).resolve()
+        if not batch_dir.is_dir() or not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
+            continue
+        for f in sorted(batch_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in _image_extensions(path=f):
+                rel = f.relative_to(UPLOADS_DIR)
+                images.append(f"/uploads/{rel}")
     return {"dataset": name, "images": images}
 
 
@@ -749,7 +886,10 @@ def set_dataset_annotation(name: str, payload: dict):
 @app.post("/datasets/{name}/assign")
 def assign_batch(name: str, payload: dict):
     batch = payload.get("batch")
-    if not batch or not (IMPORTS_DIR / batch).is_dir():
+    if not batch:
+        raise HTTPException(status_code=400, detail="Batch required")
+    batch_dir = (UPLOADS_DIR / batch).resolve()
+    if not batch_dir.is_dir() or not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
         raise HTTPException(status_code=404, detail="Batch not found")
     with DATASETS_LOCK:
         datasets = load_datasets()
@@ -807,8 +947,8 @@ def export_dataset(name: str, payload: dict | None = None):
 
     files = []
     for batch in batches:
-        batch_dir = IMPORTS_DIR / batch
-        if batch_dir.is_dir():
+        batch_dir = (UPLOADS_DIR / batch).resolve()
+        if batch_dir.is_dir() and batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
             files.extend(sorted(p for p in batch_dir.iterdir() if p.is_file()))
     if not files:
         raise HTTPException(status_code=400, detail="No images found in assigned batches")
@@ -852,7 +992,8 @@ def export_dataset(name: str, payload: dict | None = None):
             if dest.exists():
                 dest = target_dir / f"{uuid.uuid4().hex[:8]}_{f.name}"
             shutil.copy2(f, dest)
-            source_url = f"/uploads/imports/{f.parent.name}/{f.name}"
+            rel = f.relative_to(UPLOADS_DIR)
+            source_url = f"/uploads/{rel}"
             values = annotations.get(source_url, default_values)
             if source_url not in annotations:
                 missing_annotations += 1
@@ -891,11 +1032,29 @@ def download_dataset(name: str):
     return FileResponse(tar_path, filename=f"{name}.tar", media_type="application/x-tar")
 
 
+def _batch_directories():
+    if RAW_IMAGES_DIR.is_dir():
+        for source_dir in sorted(RAW_IMAGES_DIR.iterdir()):
+            if source_dir.is_dir() and any(source_dir.iterdir()):
+                yield source_dir
+    if VIDEOS_DIR.is_dir():
+        for source_dir in sorted(VIDEOS_DIR.iterdir()):
+            if not source_dir.is_dir():
+                continue
+            imgs_dir = source_dir / "imgs"
+            if not imgs_dir.is_dir():
+                continue
+            for batch_dir in sorted(imgs_dir.iterdir()):
+                if batch_dir.is_dir():
+                    yield batch_dir
+
+
 @app.get("/batches")
 def list_batches():
     return {
         "batches": sorted(
-            d.name for d in IMPORTS_DIR.iterdir() if d.is_dir()
+            str(batch_dir.relative_to(UPLOADS_DIR))
+            for batch_dir in _batch_directories()
         )
     }
 
@@ -908,63 +1067,38 @@ def list_images(batch: str | None = None):
     def _is_crops_batch(name: str) -> bool:
         return name.endswith("-crops")
 
+    def _batch_category(batch_dir: Path) -> str:
+        if _is_frames_batch(batch_dir.name):
+            return "frames"
+        if _is_crops_batch(batch_dir.name):
+            return "crops"
+        if batch_dir.resolve().is_relative_to(RAW_IMAGES_DIR.resolve()):
+            return "imported"
+        return "frames"
+
+    result = {"imported": [], "frames": [], "crops": []}
     if batch:
-        batch_dir = IMPORTS_DIR / batch
-        if batch_dir.is_dir():
-            imported = [
-                f"/uploads/imports/{batch}/{image.name}"
-                for image in sorted(batch_dir.iterdir())
-                if image.is_file()
-            ]
-        else:
-            imported = []
-
-        frames_batch = IMPORTS_DIR / f"{batch}-frames"
-        if frames_batch.is_dir():
-            frames = [
-                f"/uploads/imports/{frames_batch.name}/{frame.name}"
-                for frame in sorted(frames_batch.iterdir())
-                if frame.is_file()
-            ]
-        else:
-            frames = []
-
-        crops_batch = IMPORTS_DIR / f"{batch}-crops"
-        if crops_batch.is_dir():
-            crops = [
-                f"/uploads/imports/{crops_batch.name}/{crop.name}"
-                for crop in sorted(crops_batch.iterdir())
-                if crop.is_file()
-            ]
-        else:
-            crops = []
-    else:
-        imported = []
-        frames = [
-            f"/uploads/frames/{image.parent.name}/{image.name}"
-            for image in sorted(FRAMES_DIR.rglob("*.jpg"))
+        batch_dir = (UPLOADS_DIR / batch).resolve()
+        if not batch_dir.is_dir() or not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
+            return result
+        category = _batch_category(batch_dir)
+        result[category] = [
+            f"/uploads/{batch_dir.relative_to(UPLOADS_DIR)}/{image.name}"
+            for image in sorted(batch_dir.iterdir())
             if image.is_file()
         ]
-        crops = [
-            f"/uploads/crops/{image.name}"
-            for image in sorted(CROPS_DIR.iterdir())
-            if image.is_file()
-        ]
-        for batch_dir in sorted(IMPORTS_DIR.iterdir()):
-            if not batch_dir.is_dir():
+        return result
+
+    for batch_dir in _batch_directories():
+        category = _batch_category(batch_dir)
+        for image in sorted(batch_dir.iterdir()):
+            if not image.is_file():
                 continue
-            for image in sorted(batch_dir.iterdir()):
-                if not image.is_file():
-                    continue
-                url = f"/uploads/imports/{batch_dir.name}/{image.name}"
-                if _is_frames_batch(batch_dir.name):
-                    frames.append(url)
-                elif _is_crops_batch(batch_dir.name):
-                    crops.append(url)
-                else:
-                    imported.append(url)
+            result[category].append(
+                f"/uploads/{batch_dir.relative_to(UPLOADS_DIR)}/{image.name}"
+            )
 
-    return {"imported": imported, "frames": frames, "crops": crops}
+    return result
 
 
 @app.post("/images/delete")
