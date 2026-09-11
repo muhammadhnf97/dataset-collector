@@ -1,18 +1,6 @@
-label: paddlepaddle - person attribute
+model-name: "paddlepaddle"
+model-category: "pulc_person_attribute"
 
-folder:
-  test: test
-  train: train
-  val: val
-
-text:
-  test: test_list.txt
-  train: train_list.txt
-  val: val_list.txt
-
-# 26-length PA100k-style person attribute schema used by PULC person_attribute.
-# `type: single` means exactly one option in the group should be 1 (radio buttons).
-# `type: multi` means zero or more options can be 1 (checkboxes).
 attributes:
   - name: Hat
     type: multi
@@ -54,3 +42,5 @@ attributes:
     type: single
     indices: [23, 24, 25]
     options: [Front, Side, Back]
+
+text-format: "filename.jpg	0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,1"

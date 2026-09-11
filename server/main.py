@@ -33,7 +33,6 @@ UPLOADS_DIR = BASE_DIR / "uploads"
 RAW_IMAGES_DIR = UPLOADS_DIR / "raw-images"
 VIDEOS_DIR = UPLOADS_DIR / "videos"
 DATASETS_DIR = BASE_DIR / "datasets"
-DATASETS_FILE = DATASETS_DIR / "datasets.json"
 TEMPLATES_DIR = BASE_DIR / "template"
 
 for directory in (RAW_IMAGES_DIR, VIDEOS_DIR, DATASETS_DIR):
@@ -100,6 +99,16 @@ def next_batch_name(parent: Path):
     return f"batch-{max(numbers, default=0) + 1}"
 
 
+def next_dataset_dir_name():
+    DATASETS_DIR.mkdir(parents=True, exist_ok=True)
+    numbers = [
+        int(m.group(1))
+        for d in DATASETS_DIR.iterdir()
+        if d.is_dir() and (m := re.fullmatch(r"dataset-(\d+)", d.name))
+    ]
+    return f"dataset-{max(numbers, default=0) + 1}"
+
+
 def _image_extensions(path: Path | None = None):
     return (
         ".jpg",
@@ -125,49 +134,48 @@ def batch_first_image(batch: str):
 DEFAULT_SPLIT = {"train": 70, "val": 20, "test": 10}
 
 
+def _load_manifest(manifest_path: Path):
+    if not manifest_path.exists():
+        return None
+    try:
+        return json.loads(manifest_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _save_manifest(dir_name: str, data: dict):
+    manifest_path = DATASETS_DIR / dir_name / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": data.get("name", dir_name),
+        "model": data.get("model") or "",
+        "category": data.get("category") or "",
+    }
+    atomic_write_json(manifest_path, manifest)
+
+
 def load_datasets():
-    if not DATASETS_FILE.exists():
-        return {}
-    data = json.loads(DATASETS_FILE.read_text())
-    migrated = {}
-    for name, value in data.items():
-        if isinstance(value, list):
-            # Old format: plain list of batch names
-            migrated[name] = {
-                "batches": value,
-                "split": dict(DEFAULT_SPLIT),
-                "template": None,
-            }
-        elif isinstance(value, dict) and "batches" in value:
-            migrated[name] = {
-                "batches": value.get("batches", []),
-                "split": value.get("split") or dict(DEFAULT_SPLIT),
-                "template": value.get("template"),
-            }
-        elif isinstance(value, dict):
-            # Older format: train/val/test batch lists
-            seen = set()
-            for s in ("train", "val", "test"):
-                for b in value.get(s, []):
-                    seen.add(b)
-            migrated[name] = {
-                "batches": sorted(seen),
-                "split": dict(DEFAULT_SPLIT),
-                "template": None,
-            }
-        else:
-            migrated[name] = {
-                "batches": [],
-                "split": dict(DEFAULT_SPLIT),
-                "template": None,
-            }
-    if migrated != data:
-        DATASETS_FILE.write_text(json.dumps(migrated, indent=2))
-    return migrated
+    datasets = {}
+    if not DATASETS_DIR.is_dir():
+        return datasets
+    for d in sorted(DATASETS_DIR.iterdir()):
+        if not d.is_dir() or not re.fullmatch(r"dataset-(\d+)", d.name):
+            continue
+        manifest = _load_manifest(d / "manifest.json")
+        if not manifest:
+            continue
+        name = manifest.get("name") or d.name
+        manifest["dir"] = d.name
+        datasets[name] = manifest
+    return datasets
 
 
 def save_datasets(data: dict):
-    atomic_write_json(DATASETS_FILE, data)
+    for entry in data.values():
+        dir_name = entry.get("dir")
+        if not dir_name:
+            continue
+        _save_manifest(dir_name, entry)
 
 
 _model = None
@@ -719,31 +727,32 @@ def delete_batch(name: str):
 
 
 def _dataset_summary(name: str, entry: dict):
-    batches = entry.get("batches", [])
-    previews = [p for p in (batch_first_image(b) for b in batches) if p][:3]
     return {
         "name": name,
-        "batches": batches,
-        "batch_count": len(batches),
-        "split": entry.get("split", dict(DEFAULT_SPLIT)),
-        "template": entry.get("template"),
-        "previews": previews,
+        "model": entry.get("model") or "",
+        "category": entry.get("category") or "",
     }
 
 
 def list_template_names():
     if not TEMPLATES_DIR.is_dir():
         return []
-    return sorted(
-        d.name
-        for d in TEMPLATES_DIR.iterdir()
-        if d.is_dir() and (d / "config.yaml").exists()
-    )
+    names = []
+    for config_path in TEMPLATES_DIR.rglob("config.yaml"):
+        rel = config_path.parent.relative_to(TEMPLATES_DIR)
+        if rel == Path("."):
+            continue
+        names.append(rel.as_posix())
+    return sorted(names)
 
 
 def load_template_config(template_name: str):
-    config_path = TEMPLATES_DIR / template_name / "config.yaml"
-    if not config_path.exists():
+    template_name = unquote(template_name)
+    config_path = (TEMPLATES_DIR / template_name / "config.yaml").resolve()
+    if (
+        not config_path.is_relative_to(TEMPLATES_DIR.resolve())
+        or not config_path.exists()
+    ):
         raise HTTPException(status_code=404, detail=f"Template '{template_name}' not found")
     return yaml.safe_load(config_path.read_text()) or {}
 
@@ -753,11 +762,13 @@ def get_templates():
     templates = []
     for name in list_template_names():
         config = load_template_config(name)
-        templates.append({"name": name, "label": config.get("label", name)})
+        label = config.get("model-category") or config.get("label") or name
+        model = name.split("/", 1)[0] if "/" in name else name
+        templates.append({"name": name, "label": label, "model": model})
     return {"templates": templates}
 
 
-@app.get("/templates/{name}/attributes")
+@app.get("/templates/{name:path}/attributes")
 def get_template_attributes(name: str):
     config = load_template_config(name)
     return {"template": name, "attributes": config.get("attributes", [])}
@@ -778,8 +789,14 @@ def create_dataset(payload: dict):
         datasets = load_datasets()
         if name in datasets:
             raise HTTPException(status_code=400, detail="Dataset already exists")
-        datasets[name] = {"batches": [], "split": dict(DEFAULT_SPLIT), "template": None}
-        save_datasets(datasets)
+        dataset_dir_name = next_dataset_dir_name()
+        (DATASETS_DIR / dataset_dir_name).mkdir(parents=True)
+        manifest = {
+            "name": name,
+            "model": (payload.get("model") or "").strip(),
+            "category": (payload.get("category") or "").strip(),
+        }
+        _save_manifest(dataset_dir_name, manifest)
     return {"dataset": name}
 
 
@@ -799,11 +816,13 @@ def delete_dataset(name: str):
         datasets = load_datasets()
         if name not in datasets:
             raise HTTPException(status_code=404, detail="Dataset not found")
+        dataset_dir_name = datasets[name].get("dir")
         del datasets[name]
         save_datasets(datasets)
-    dataset_dir = DATASETS_DIR / name
-    if dataset_dir.exists():
-        shutil.rmtree(dataset_dir)
+    if dataset_dir_name:
+        dataset_dir = DATASETS_DIR / dataset_dir_name
+        if dataset_dir.exists():
+            shutil.rmtree(dataset_dir)
     return {"deleted": name}
 
 

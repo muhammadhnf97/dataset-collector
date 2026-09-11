@@ -479,6 +479,7 @@ function App() {
   const [createDatasetOpen, setCreateDatasetOpen] = useState(false)
   const [createDatasetName, setCreateDatasetName] = useState('')
   const [createDatasetTemplate, setCreateDatasetTemplate] = useState('')
+  const [creatingDataset, setCreatingDataset] = useState(false)
   const [assignToDatasetOpen, setAssignToDatasetOpen] = useState(false)
   const [assignToDatasetBatch, setAssignToDatasetBatch] = useState('')
   const [selectedDataset, setSelectedDataset] = useState('')
@@ -1365,40 +1366,35 @@ function App() {
   }
 
   const doCreateDataset = async () => {
+    if (creatingDataset) return
     const name = createDatasetName.trim()
     if (!name) return
+    setCreatingDataset(true)
+    setCreateDatasetOpen(false)
+    const [model = '', category = ''] = (createDatasetTemplate || '').split('/')
     try {
       const createRes = await fetch('/api/datasets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({
+          name,
+          model: model.trim(),
+          category: category.trim(),
+        }),
       })
       const createData = await createRes.json()
       if (!createRes.ok) {
         setStatus(`Failed: ${createData.detail ?? 'Unknown error'}`)
         return
       }
-      if (createDatasetTemplate) {
-        const templateRes = await fetch(
-          `/api/datasets/${encodeURIComponent(name)}/template`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ template: createDatasetTemplate }),
-          },
-        )
-        if (!templateRes.ok) {
-          setStatus(`Created ${name}, but failed to set template`)
-          return
-        }
-      }
       setCreateDatasetName('')
       setCreateDatasetTemplate('')
-      setCreateDatasetOpen(false)
       setStatus(`Created dataset ${createData.dataset}`)
-      fetchDatasets()
+      await fetchDatasets()
     } catch {
       setStatus('Failed: could not reach the server')
+    } finally {
+      setCreatingDataset(false)
     }
   }
 
@@ -2188,14 +2184,15 @@ function App() {
                 {!removeDatasetMode && !createDatasetOpen && (
                   <button
                     type="button"
+                    disabled={creatingDataset}
                     onClick={() => {
                       setCreateDatasetOpen(true)
                       setCreateDatasetName('')
                       setCreateDatasetTemplate('')
                     }}
-                    className="flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-emerald-600"
+                    className="flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
                   >
-                    New dataset
+                    {creatingDataset ? 'Creating...' : 'New dataset'}
                   </button>
                 )}
                 {!removeDatasetMode && !createDatasetOpen && (
@@ -2298,18 +2295,8 @@ function App() {
                         {d.name}
                       </h3>
                       <p className="text-sm text-slate-500">
-                        {d.batch_count ?? d.batches?.length ?? 0} batch
-                        {(d.batch_count ?? d.batches?.length ?? 0) === 1
-                          ? ''
-                          : 'es'}
-                      </p>
-                      <p className="mt-2 text-xs text-slate-500">
-                        Model:{' '}
-                        <span className="font-medium text-slate-700">
-                          {templates.find((t) => t.name === d.template)?.label ??
-                            d.template ??
-                            'Not set'}
-                        </span>
+                        {d.model ? `${d.model}` : 'No model'}
+                        {d.model && d.category ? ` / ${d.category}` : ''}
                       </p>
                     </div>
                   </div>
@@ -2337,39 +2324,6 @@ function App() {
                   {annotatedCount} / {filteredImages.length} annotated
                 </span>
                 <div className="ml-auto flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const dataset = datasets.find(
-                        (d) => d.name === activeDataset,
-                      )
-                      openAnnotate(
-                        activeDataset,
-                        dataset?.template,
-                        datasetBatchFilter,
-                      )
-                    }}
-                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
-                  >
-                    Annotate{datasetBatchFilter ? ` (${datasetBatchFilter})` : ''}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAssignToDatasetBatch(batches[0] ?? '')
-                      setAssignToDatasetOpen(true)
-                    }}
-                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
-                  >
-                    Assign batch
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowExportPanel((v) => !v)}
-                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
-                  >
-                    Export
-                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveDataset('')}
@@ -2485,41 +2439,15 @@ function App() {
                 </div>
               ) : (
                 <div className="mt-4 grid grid-cols-6 gap-3">
-                  {filteredImages.map((src) => {
-                    const isAnnotated = datasetAnnotations[src] !== undefined
-                    return (
-                      <button
-                        type="button"
-                        key={src}
-                        title={isAnnotated ? 'Annotated — click to edit' : 'Click to start annotating here'}
-                        onClick={() => {
-                          const dataset = datasets.find(
-                            (d) => d.name === activeDataset,
-                          )
-                          openAnnotate(
-                            activeDataset,
-                            dataset?.template,
-                            datasetBatchFilter,
-                            src,
-                          )
-                        }}
-                        className="relative block"
-                      >
-                        <img
-                          src={`/api${src}`}
-                          alt=""
-                          className={`aspect-video w-full rounded-lg object-cover shadow transition hover:scale-105 ${
-                            isAnnotated ? 'ring-2 ring-emerald-500' : ''
-                          }`}
-                        />
-                        {isAnnotated && (
-                          <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-bold text-white shadow">
-                            ✓
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })}
+                  {filteredImages.map((src) => (
+                    <div key={src} className="relative block">
+                      <img
+                        src={`/api${src}`}
+                        alt=""
+                        className="aspect-video w-full rounded-lg object-cover shadow"
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
             </section>
@@ -2977,11 +2905,24 @@ function App() {
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
                 >
                   <option value="">No template</option>
-                  {templates.map((t) => (
-                    <option key={t.name} value={t.name}>
-                      {t.label}
-                    </option>
-                  ))}
+                  {Object.entries(
+                    templates.reduce((acc, t) => {
+                      const group = t.model || 'Other'
+                      if (!acc[group]) acc[group] = []
+                      acc[group].push(t)
+                      return acc
+                    }, {}),
+                  )
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([model, items]) => (
+                      <optgroup key={model} label={model}>
+                        {items.map((t) => (
+                          <option key={t.name} value={t.name}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
                 </select>
               </div>
             </div>
@@ -3000,10 +2941,10 @@ function App() {
               <button
                 type="button"
                 onClick={doCreateDataset}
-                disabled={!createDatasetName.trim()}
+                disabled={!createDatasetName.trim() || creatingDataset}
                 className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
               >
-                Create
+                {creatingDataset ? 'Creating...' : 'Create'}
               </button>
             </div>
           </div>
