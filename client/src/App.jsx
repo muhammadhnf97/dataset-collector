@@ -507,6 +507,7 @@ function App() {
   const [availableBatches, setAvailableBatches] = useState([])
   const [selectedImportBatches, setSelectedImportBatches] = useState(new Set())
   const [importingBatch, setImportingBatch] = useState(false)
+  const [preLabeling, setPreLabeling] = useState(false)
   const [selectedDataset, setSelectedDataset] = useState('')
   const [templates, setTemplates] = useState([])
   const [annotate, setAnnotate] = useState(null)
@@ -1469,6 +1470,28 @@ function App() {
       setStatus('Failed: could not reach the server')
     } finally {
       setImportingBatch(false)
+    }
+  }
+
+  const doPrelabel = async () => {
+    if (!activeDataset) return
+    setPreLabeling(true)
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/prelabel`,
+        { method: 'POST' },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setStatus(`Pre-labeled ${data.images} images`)
+      openDataset(activeDataset)
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setPreLabeling(false)
     }
   }
 
@@ -2439,6 +2462,14 @@ function App() {
                     </option>
                     <option value="text">Text</option>
                   </select>
+                  <button
+                    type="button"
+                    onClick={doPrelabel}
+                    disabled={!templatePath || preLabeling}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
+                  >
+                    {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
+                  </button>
                   <button
                     type="button"
                     onClick={openImportBatch}

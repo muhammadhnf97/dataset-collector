@@ -960,6 +960,79 @@ def set_dataset_template(name: str, payload: dict):
     return {"dataset": name, "framework": framework, "model": model}
 
 
+def _prelabel_image(image_path: Path, model_dir: Path) -> list[int]:
+    # Real inference: load the extracted Paddle model and run it on image_path.
+    # This is a stub; install paddlepaddle/paddleclas to replace it.
+    try:
+        import paddle  # noqa: F401
+    except ImportError:
+        raise HTTPException(
+            status_code=400,
+            detail="PaddlePaddle is not installed; pre-label inference not available",
+        )
+    raise HTTPException(
+        status_code=501,
+        detail="Pre-label inference is not yet implemented",
+    )
+
+
+@app.post("/datasets/{name:path}/prelabel")
+def prelabel_dataset(name: str):
+    name = unquote(name)
+    datasets = load_datasets()
+    if name not in datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    entry = datasets[name]
+    dir_name = entry.get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    framework = (entry.get("framework") or "").strip()
+    model = (entry.get("model") or "").strip()
+    if not framework or not model:
+        raise HTTPException(status_code=400, detail="Dataset framework/model not set")
+
+    config = load_template_config(_normalize_template_path(framework, model))
+    prelabel_file = (config.get("pre-label-model") or "").strip()
+    if not prelabel_file:
+        raise HTTPException(status_code=400, detail="No pre-label model configured")
+
+    template_slug = _normalize_template_path(framework, model)
+    tar_path = (TEMPLATES_DIR / template_slug / prelabel_file).resolve()
+    if not tar_path.is_relative_to(TEMPLATES_DIR.resolve()) or not tar_path.exists():
+        raise HTTPException(status_code=404, detail="Pre-label model file not found")
+
+    dataset_dir = DATASETS_DIR / dir_name
+    model_dir = dataset_dir / "pre-label-model"
+    if model_dir.exists():
+        shutil.rmtree(model_dir)
+    model_dir.mkdir(parents=True)
+    with tarfile.open(tar_path, "r") as tar:
+        tar.extractall(model_dir, filter="data")
+
+    annotations = load_annotations(dir_name)
+    count = 0
+    for txt in dataset_dir.glob("*.txt"):
+        for line in txt.read_text().splitlines():
+            if not line.strip():
+                continue
+            path = line.split("\t")[0].strip()
+            if not path:
+                continue
+            img_path = (UPLOADS_DIR / path).resolve()
+            if (
+                not img_path.is_file()
+                or not img_path.is_relative_to(UPLOADS_DIR.resolve())
+            ):
+                continue
+            values = _prelabel_image(img_path, model_dir)
+            annotations[f"/uploads/{path}"] = values
+            count += 1
+
+    save_annotations(dir_name, annotations)
+    return {"dataset": name, "images": count}
+
+
 @app.get("/datasets/{name:path}/images")
 def get_dataset_images(name: str):
     name = unquote(name)
