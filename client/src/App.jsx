@@ -2723,11 +2723,11 @@ function App() {
       />
 
       {attrAnnotate && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm px-6 py-4">
-          <div className="relative flex w-full max-w-5xl flex-1 flex-col overflow-hidden rounded-2xl bg-slate-900/80 shadow-2xl ring-1 ring-white/10">
-            <div className="flex items-center justify-between border-b border-white/10 bg-black/50 px-4 py-3">
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm px-6 py-4">
+          <div className="relative flex w-full max-w-5xl flex-1 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-2xl backdrop-blur-sm">
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100/80 px-4 py-3">
               <div className="flex items-center gap-3">
-                <span className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white">
+                <span className="rounded-full bg-slate-200/80 px-3 py-1.5 text-sm font-medium text-slate-800">
                   {attrAnnotate.dataset} · {attrAnnotate.imgIndex + 1} / {attrAnnotate.images.length}
                 </span>
                 <select
@@ -2739,7 +2739,7 @@ function App() {
                       imgIndex: 0,
                     }))
                   }
-                  className="rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-sm text-white outline-none"
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 outline-none"
                 >
                   {attrAnnotate.attributes.map((attr, i) => (
                     <option key={attr.name} value={i}>
@@ -2753,14 +2753,14 @@ function App() {
                 onClick={() => {
                   setAttrAnnotate(null)
                 }}
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-slate-700 transition hover:bg-slate-300"
               >
                 ×
               </button>
             </div>
 
             {attrAnnotate.images.length > 0 && (
-              <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 bg-black/40 p-2">
+              <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-slate-200 bg-slate-100/80 p-2">
                 {attrAnnotate.images.map((src, i) => {
                   const isAnnotated = attrAnnotate.annotations[src] !== undefined
                   return (
@@ -2793,29 +2793,29 @@ function App() {
             )}
 
             <div className="flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black/50 p-4">
+              <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-slate-100/80 p-2">
                 {attrAnnotate.images[attrAnnotate.imgIndex] ? (
                   <img
                     src={`/api${attrAnnotate.images[attrAnnotate.imgIndex]}`}
                     alt=""
-                    className="max-h-full max-w-full object-contain"
+                    className="h-full w-full object-contain"
                   />
                 ) : (
-                  <p className="text-white">No image</p>
+                  <p className="text-slate-500">No image</p>
                 )}
               </div>
 
-              <div className="flex w-80 flex-col border-l border-white/10 bg-slate-900/80 p-4">
+              <div className="flex w-80 flex-col border-l border-slate-200 bg-slate-100/90 p-4">
                 {(() => {
                   const group = attrAnnotate.attributes[attrAnnotate.attrIndex]
                   const image = attrAnnotate.images[attrAnnotate.imgIndex]
                   const values = attrValuesFor(image)
                   return (
                     <>
-                      <h3 className="text-lg font-semibold text-white">
+                      <h3 className="text-lg font-semibold text-slate-800">
                         {group.name}
                       </h3>
-                      <p className="mt-1 text-sm text-slate-400">
+                      <p className="mt-1 text-sm text-slate-500">
                         Press a number, then use ← → to move.
                       </p>
                       <div className="mt-4 flex flex-col gap-2">
@@ -2830,11 +2830,13 @@ function App() {
                               }}
                               className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition ${
                                 selected
-                                  ? 'border-indigo-500 bg-indigo-500/20 text-white'
-                                  : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
+                                  ? 'border-indigo-500 bg-indigo-500/20 text-indigo-700'
+                                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
                               }`}
                             >
-                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/30 text-xs font-bold text-white">
+                              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                                selected ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-700'
+                              }`}>
                                 {i + 1}
                               </span>
                               {option}
@@ -2847,9 +2849,9 @@ function App() {
                             onClick={() => {
                               applyAttrValue(-1, false)
                             }}
-                            className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-left text-sm text-slate-200 transition hover:bg-white/10"
+                            className="flex items-center gap-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-100"
                           >
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/30 text-xs font-bold text-white">
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-700">
                               0
                             </span>
                             None
@@ -2862,13 +2864,13 @@ function App() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between border-t border-white/10 bg-black/50 px-4 py-2">
+            <div className="flex items-center justify-between border-t border-slate-200 bg-slate-100/80 px-4 py-2">
               <button
                 type="button"
                 onClick={() => {
                   attrPrevImage()
                 }}
-                className="rounded-full bg-white/10 px-4 py-1.5 text-sm text-white transition hover:bg-white/20"
+                className="rounded-full bg-slate-200 px-4 py-1.5 text-sm text-slate-800 transition hover:bg-slate-300"
               >
                 ← Prev
               </button>
@@ -2877,7 +2879,7 @@ function App() {
                 onClick={() => {
                   attrNextImage()
                 }}
-                className="rounded-full bg-white/10 px-4 py-1.5 text-sm text-white transition hover:bg-white/20"
+                className="rounded-full bg-slate-200 px-4 py-1.5 text-sm text-slate-800 transition hover:bg-slate-300"
               >
                 Next →
               </button>
