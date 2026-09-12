@@ -342,7 +342,7 @@ function RemoveModeModal({
   )
 }
 
-function ConfirmModal({ count, onCancel, onConfirm, title, message }) {
+function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel = 'Delete' }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-80 rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
@@ -382,7 +382,7 @@ function ConfirmModal({ count, onCancel, onConfirm, title, message }) {
             onClick={onConfirm}
             className="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-red-500/30 transition hover:bg-red-600"
           >
-            Delete
+            {confirmLabel}
           </button>
         </div>
       </div>
@@ -441,6 +441,7 @@ function App() {
   const [rawSelectedClasses, setRawSelectedClasses] = useState([])
   const [rawConfidence, setRawConfidence] = useState(70)
   const [rawCropMargin, setRawCropMargin] = useState(0)
+  const [rawRemoveSource, setRawRemoveSource] = useState(false)
   const [rawGenerating, setRawGenerating] = useState(false)
   const [removeDatasetMode, setRemoveDatasetMode] = useState(false)
   const [selectedDatasetsToRemove, setSelectedDatasetsToRemove] = useState(new Set())
@@ -508,9 +509,13 @@ function App() {
   const [selectedImportBatches, setSelectedImportBatches] = useState(new Set())
   const [importingBatch, setImportingBatch] = useState(false)
   const [preLabeling, setPreLabeling] = useState(false)
+  const [prelabelConfirmOpen, setPrelabelConfirmOpen] = useState(false)
+  const [prelabelConfirmCount, setPrelabelConfirmCount] = useState(0)
+  const [exportFormat, setExportFormat] = useState('tar')
   const [selectedDataset, setSelectedDataset] = useState('')
   const [templates, setTemplates] = useState([])
   const [annotate, setAnnotate] = useState(null)
+  const [attrAnnotate, setAttrAnnotate] = useState(null)
   const [markedForRemoval, setMarkedForRemoval] = useState(new Set())
 
   const toggleMarked = (image) => {
@@ -797,6 +802,7 @@ function App() {
             margin: rawCropMargin,
             classes: rawSelectedClasses.join(','),
             confidence: rawConfidence / 100,
+            remove_source: rawRemoveSource,
           }),
         },
       )
@@ -892,14 +898,7 @@ function App() {
     }
   }
 
-  const openDataset = async (name) => {
-    if (activeDataset === name) {
-      setActiveDataset('')
-      return
-    }
-    setExportResult(null)
-    setShowExportPanel(false)
-    setDatasetBatchFilter(null)
+  const refreshDataset = async (name) => {
     try {
       const [datasetRes, imagesRes, annotRes] = await Promise.all([
         fetch(`/api/datasets/${encodeURIComponent(name)}`),
@@ -922,6 +921,18 @@ function App() {
     } catch {
       setStatus('Failed: could not reach the server')
     }
+  }
+
+  const openDataset = async (name) => {
+    if (activeDataset === name) {
+      setActiveDataset('')
+      return
+    }
+    setExportResult(null)
+    setExportFormat('tar')
+    setShowExportPanel(false)
+    setDatasetBatchFilter(null)
+    await refreshDataset(name)
   }
 
   const fetchTemplates = async () => {
@@ -1016,6 +1027,101 @@ function App() {
     } catch {
       setStatus('Failed: could not reach the server')
     }
+  }
+
+  const openAttrAnnotate = async (name, templateName, batchFilter = null) => {
+    if (!templateName) {
+      setStatus('Set a model for this dataset before annotating')
+      return
+    }
+    try {
+      const [imagesRes, attrsRes, annotRes] = await Promise.all([
+        fetch(`/api/datasets/${encodeURIComponent(name)}/images`),
+        fetch(`/api/templates/${encodeURIComponent(templateName)}/attributes`),
+        fetch(`/api/datasets/${encodeURIComponent(name)}/annotations`),
+      ])
+      const images = await imagesRes.json()
+      const attrs = await attrsRes.json()
+      const annot = await annotRes.json()
+      if (!imagesRes.ok || !attrsRes.ok || !annotRes.ok) {
+        setStatus('Failed to load annotation data')
+        return
+      }
+      const attributes = attrs.attributes ?? []
+      const length =
+        Math.max(0, ...attributes.flatMap((g) => g.indices)) + 1
+      const filteredImages = batchFilter
+        ? (images.images ?? []).filter((src) =>
+            src.includes(`/imports/${batchFilter}/`),
+          )
+        : images.images ?? []
+      const annotations = annot.annotations ?? {}
+      setAttrAnnotate({
+        dataset: name,
+        template: templateName,
+        batchFilter,
+        images: filteredImages,
+        attributes,
+        length,
+        annotations,
+        attrIndex: 0,
+        imgIndex: 0,
+      })
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const attrValuesFor = (image) => {
+    if (!attrAnnotate) return []
+    return (
+      attrAnnotate.annotations[image] ?? Array(attrAnnotate.length).fill(0)
+    )
+  }
+
+  const applyAttrValue = async (optionIndex, selected, advance = true) => {
+    if (!attrAnnotate) return
+    const image = attrAnnotate.images[attrAnnotate.imgIndex]
+    const group = attrAnnotate.attributes[attrAnnotate.attrIndex]
+    const current = [...(attrAnnotate.annotations[image] ?? Array(attrAnnotate.length).fill(0))]
+    if (group.type === 'single') {
+      group.indices.forEach((idx) => {
+        current[idx] = 0
+      })
+      if (selected && optionIndex >= 0) {
+        current[group.indices[optionIndex]] = 1
+      }
+    } else if (optionIndex >= 0) {
+      current[group.indices[optionIndex]] = selected ? 1 : 0
+    }
+    setAttrAnnotate((s) => ({
+      ...s,
+      annotations: { ...s.annotations, [image]: current },
+    }))
+    try {
+      await fetch(`/api/datasets/${encodeURIComponent(attrAnnotate.dataset)}/annotations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image, values: current }),
+      })
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+    if (advance && group.type === 'single') {
+      attrNextImage()
+    }
+  }
+
+  const attrNextImage = () => {
+    if (!attrAnnotate) return
+    const next = Math.min(attrAnnotate.imgIndex + 1, attrAnnotate.images.length - 1)
+    setAttrAnnotate((s) => ({ ...s, imgIndex: next }))
+  }
+
+  const attrPrevImage = () => {
+    if (!attrAnnotate) return
+    const prev = Math.max(attrAnnotate.imgIndex - 1, 0)
+    setAttrAnnotate((s) => ({ ...s, imgIndex: prev }))
   }
 
   const annotateValuesFor = (image) => {
@@ -1281,28 +1387,12 @@ function App() {
     setExportResult(null)
     setStatus(`Exporting ${activeDataset}...`)
     try {
-      // Make sure the export uses whatever ratio is currently shown,
-      // even if "Save split" wasn't clicked.
-      const splitResponse = await fetch(
-        `/api/datasets/${encodeURIComponent(activeDataset)}/split`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(datasetSplit),
-        },
-      )
-      if (!splitResponse.ok) {
-        const data = await splitResponse.json()
-        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
-        setExporting(false)
-        return
-      }
       const response = await fetch(
         `/api/datasets/${encodeURIComponent(activeDataset)}/export`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ split: datasetSplit, format: exportFormat }),
         },
       )
       const data = await response.json()
@@ -1466,6 +1556,7 @@ function App() {
       setImportBatchOpen(false)
       setSelectedImportBatches(new Set())
       fetchDatasets()
+      refreshDataset(activeDataset)
     } catch {
       setStatus('Failed: could not reach the server')
     } finally {
@@ -1473,8 +1564,9 @@ function App() {
     }
   }
 
-  const doPrelabel = async () => {
+  const runPrelabel = async () => {
     if (!activeDataset) return
+    setPrelabelConfirmOpen(false)
     setPreLabeling(true)
     try {
       const response = await fetch(
@@ -1492,6 +1584,19 @@ function App() {
       setStatus('Failed: could not reach the server')
     } finally {
       setPreLabeling(false)
+    }
+  }
+
+  const doPrelabel = () => {
+    if (!activeDataset) return
+    const existing = datasetImages.filter(
+      (src) => datasetAnnotations[src] !== undefined,
+    )
+    if (existing.length > 0) {
+      setPrelabelConfirmCount(existing.length)
+      setPrelabelConfirmOpen(true)
+    } else {
+      runPrelabel()
     }
   }
 
@@ -1567,6 +1672,44 @@ function App() {
     return () => window.removeEventListener('keydown', handleKey)
   }, [annotate])
 
+  useEffect(() => {
+    if (!attrAnnotate) return
+    const handleKey = (e) => {
+      const group = attrAnnotate.attributes[attrAnnotate.attrIndex]
+      if (!group) return
+      if (e.key === 'Escape') {
+        applyAttrValue(0, false, false)
+        setAttrAnnotate(null)
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        attrPrevImage()
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        attrNextImage()
+      }
+      if (/^[1-9]$/.test(e.key)) {
+        const i = parseInt(e.key, 10) - 1
+        if (i >= 0 && i < group.options.length) {
+          e.preventDefault()
+          const current = attrValuesFor(attrAnnotate.images[attrAnnotate.imgIndex])
+          const isOneOf = group.type === 'single'
+          const newSelected = isOneOf ? true : current[group.indices[i]] !== 1
+          applyAttrValue(i, newSelected)
+        }
+      }
+      if (e.key === '0') {
+        e.preventDefault()
+        if (group.type === 'single') {
+          applyAttrValue(-1, false)
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [attrAnnotate])
+
   const handleFileChange = async (event) => {
     const files = event.target.files ? Array.from(event.target.files) : []
     if (files.length === 0) return
@@ -1619,8 +1762,11 @@ function App() {
       })
       const data = await response.json()
       if (response.ok) {
+        const batchLabel = data.batches?.length
+          ? `batches ${data.batches.join(', ')}`
+          : `batch ${data.batch}`
         setStatus(
-          `Uploaded batch ${data.batch}: ${data.image_count} images, ${data.video_count} videos`,
+          `Uploaded ${batchLabel}: ${data.image_count} images, ${data.video_count} videos`,
         )
         fetchVideos()
         fetchImages()
@@ -2149,6 +2295,16 @@ function App() {
                     />
                   </label>
 
+                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={rawRemoveSource}
+                      onChange={(e) => setRawRemoveSource(e.target.checked)}
+                      className="h-4 w-4 rounded border-slate-300 text-indigo-500"
+                    />
+                    Remove source batch after generate
+                  </label>
+
                   <div className="flex min-w-0 flex-1 flex-col gap-1">
                     <span className="text-xs font-medium text-slate-700">
                       YOLO classes
@@ -2444,38 +2600,41 @@ function App() {
                 <div className="ml-auto flex items-center gap-2">
                   <select
                     value=""
-                    disabled={!templatePath}
+                    disabled={!templatePath || preLabeling}
                     onChange={(e) => {
                       const mode = e.target.value
                       e.target.value = ''
-                      if (mode === 'text') {
-                        openAnnotate(activeDataset, templatePath)
+                      if (mode === 'prelabel') {
+                        doPrelabel()
+                      }
+                      if (mode === 'attribute') {
+                        openAttrAnnotate(activeDataset, templatePath)
                       }
                     }}
                     className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 outline-none disabled:opacity-40"
                   >
                     <option value="" disabled>
-                      Annotate
+                      Label
                     </option>
-                    <option value="draw" disabled>
-                      Draw
+                    <option value="prelabel">
+                      {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
                     </option>
-                    <option value="text">Text</option>
+                    <option value="attribute">Correct Attribute</option>
                   </select>
-                  <button
-                    type="button"
-                    onClick={doPrelabel}
-                    disabled={!templatePath || preLabeling}
-                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
-                  >
-                    {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
-                  </button>
                   <button
                     type="button"
                     onClick={openImportBatch}
                     className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
                   >
                     Import batch
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowExportPanel(true)}
+                    disabled={datasetBatches.length === 0}
+                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
+                  >
+                    Export dataset
                   </button>
                   <button
                     type="button"
@@ -2486,75 +2645,6 @@ function App() {
                   </button>
                 </div>
               </div>
-
-              {showExportPanel && (
-                <div className="relative mt-4 flex flex-col items-stretch gap-2.5 rounded-xl border border-white/10 bg-slate-900 p-3.5 shadow-2xl">
-                  <button
-                    type="button"
-                    onClick={() => setShowExportPanel(false)}
-                    className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-xs text-slate-300 hover:bg-slate-600 hover:text-white"
-                  >
-                    ×
-                  </button>
-                  <h4 className="pr-4 text-xs font-semibold uppercase tracking-wide text-slate-300">
-                    Split ratio (%)
-                  </h4>
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    {['train', 'val', 'test'].map((key) => (
-                      <label
-                        key={key}
-                        className="flex items-center gap-1 text-xs font-medium text-white"
-                      >
-                        <span className="capitalize">{key}</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={datasetSplit[key]}
-                          onChange={(e) =>
-                            setDatasetSplit((s) => ({
-                              ...s,
-                              [key]: Number(e.target.value) || 0,
-                            }))
-                          }
-                          className="w-14 rounded border border-slate-500 bg-slate-700 px-1.5 py-1 text-xs text-white"
-                        />
-                      </label>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={doSaveSplit}
-                      className="rounded-lg border border-slate-600 bg-slate-700 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-slate-600"
-                    >
-                      Save split
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2.5">
-                    <button
-                      type="button"
-                      onClick={doExportDataset}
-                      disabled={exporting || datasetBatches.length === 0}
-                      className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white shadow-md shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-50"
-                    >
-                      {exporting ? 'Exporting...' : 'Export dataset'}
-                    </button>
-                    {exportResult && (
-                      <>
-                        <span className="text-xs text-slate-400">
-                          {exportResult.counts.train}/{exportResult.counts.val}/{exportResult.counts.test}
-                        </span>
-                        <a
-                          href={`/api${exportResult.download}`}
-                          className="rounded-full border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-400 transition hover:bg-emerald-500/20"
-                        >
-                          Download tar
-                        </a>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
 
               {Object.keys(groups).length === 0 ? (
                 <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
@@ -2631,6 +2721,170 @@ function App() {
         onNavigate={navigateDatasetModal}
         onSelect={setDatasetModalIndex}
       />
+
+      {attrAnnotate && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm px-6 py-4">
+          <div className="relative flex w-full max-w-5xl flex-1 flex-col overflow-hidden rounded-2xl bg-slate-900/80 shadow-2xl ring-1 ring-white/10">
+            <div className="flex items-center justify-between border-b border-white/10 bg-black/50 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <span className="rounded-full bg-white/10 px-3 py-1.5 text-sm text-white">
+                  {attrAnnotate.dataset} · {attrAnnotate.imgIndex + 1} / {attrAnnotate.images.length}
+                </span>
+                <select
+                  value={attrAnnotate.attrIndex}
+                  onChange={(e) =>
+                    setAttrAnnotate((s) => ({
+                      ...s,
+                      attrIndex: parseInt(e.target.value, 10),
+                      imgIndex: 0,
+                    }))
+                  }
+                  className="rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-sm text-white outline-none"
+                >
+                  {attrAnnotate.attributes.map((attr, i) => (
+                    <option key={attr.name} value={i}>
+                      {attr.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAttrAnnotate(null)
+                }}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+              >
+                ×
+              </button>
+            </div>
+
+            {attrAnnotate.images.length > 0 && (
+              <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-white/10 bg-black/40 p-2">
+                {attrAnnotate.images.map((src, i) => {
+                  const isAnnotated = attrAnnotate.annotations[src] !== undefined
+                  return (
+                    <button
+                      key={src}
+                      type="button"
+                      onClick={() =>
+                        setAttrAnnotate((s) => ({ ...s, imgIndex: i }))
+                      }
+                      className={`relative h-14 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition ${
+                        i === attrAnnotate.imgIndex
+                          ? 'border-indigo-500'
+                          : 'border-transparent opacity-60 hover:opacity-100'
+                      } ${isAnnotated ? 'ring-2 ring-emerald-500' : ''}`}
+                    >
+                      <img
+                        src={`/api${src}`}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                      {isAnnotated && (
+                        <span className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[8px] font-bold text-white">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className="flex flex-1 overflow-hidden">
+              <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-black/50 p-4">
+                {attrAnnotate.images[attrAnnotate.imgIndex] ? (
+                  <img
+                    src={`/api${attrAnnotate.images[attrAnnotate.imgIndex]}`}
+                    alt=""
+                    className="max-h-full max-w-full object-contain"
+                  />
+                ) : (
+                  <p className="text-white">No image</p>
+                )}
+              </div>
+
+              <div className="flex w-80 flex-col border-l border-white/10 bg-slate-900/80 p-4">
+                {(() => {
+                  const group = attrAnnotate.attributes[attrAnnotate.attrIndex]
+                  const image = attrAnnotate.images[attrAnnotate.imgIndex]
+                  const values = attrValuesFor(image)
+                  return (
+                    <>
+                      <h3 className="text-lg font-semibold text-white">
+                        {group.name}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Press a number, then use ← → to move.
+                      </p>
+                      <div className="mt-4 flex flex-col gap-2">
+                        {group.options.map((option, i) => {
+                          const selected = values[group.indices[i]] === 1
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              onClick={() => {
+                                applyAttrValue(i, group.type === 'single' ? true : !selected)
+                              }}
+                              className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition ${
+                                selected
+                                  ? 'border-indigo-500 bg-indigo-500/20 text-white'
+                                  : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
+                              }`}
+                            >
+                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/30 text-xs font-bold text-white">
+                                {i + 1}
+                              </span>
+                              {option}
+                            </button>
+                          )
+                        })}
+                        {group.type === 'single' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              applyAttrValue(-1, false)
+                            }}
+                            className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-left text-sm text-slate-200 transition hover:bg-white/10"
+                          >
+                            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/30 text-xs font-bold text-white">
+                              0
+                            </span>
+                            None
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between border-t border-white/10 bg-black/50 px-4 py-2">
+              <button
+                type="button"
+                onClick={() => {
+                  attrPrevImage()
+                }}
+                className="rounded-full bg-white/10 px-4 py-1.5 text-sm text-white transition hover:bg-white/20"
+              >
+                ← Prev
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  attrNextImage()
+                }}
+                className="rounded-full bg-white/10 px-4 py-1.5 text-sm text-white transition hover:bg-white/20"
+              >
+                Next →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {annotate && (
         <div className="fixed inset-0 z-50 flex bg-black/90 backdrop-blur-sm">
@@ -3017,6 +3271,107 @@ function App() {
         />
       )}
 
+      {prelabelConfirmOpen && (
+        <ConfirmModal
+          count={prelabelConfirmCount}
+          title="Pre-label will overwrite annotations"
+          message={`This dataset already has ${prelabelConfirmCount} annotated image${prelabelConfirmCount === 1 ? '' : 's'}. Running pre-label will overwrite them. Are you sure?`}
+          onCancel={() => setPrelabelConfirmOpen(false)}
+          onConfirm={runPrelabel}
+          confirmLabel="Overwrite"
+        />
+      )}
+
+      {showExportPanel && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setShowExportPanel(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-slate-800">
+              Export {activeDataset}
+            </h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Set the split ratio before exporting.
+            </p>
+            <div className="mt-4 flex justify-center gap-4">
+              {['train', 'val', 'test'].map((key) => (
+                <label
+                  key={key}
+                  className="flex flex-col items-center gap-1 text-sm font-medium text-slate-700"
+                >
+                  <span className="capitalize">{key}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={datasetSplit[key]}
+                    onChange={(e) =>
+                      setDatasetSplit((s) => ({
+                        ...s,
+                        [key]: Number(e.target.value) || 0,
+                      }))
+                    }
+                    className="w-16 rounded-lg border border-slate-300 bg-white px-1.5 py-2 text-center text-sm text-slate-800"
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <label className="text-sm font-medium text-slate-700">
+                Format
+              </label>
+              <select
+                value={exportFormat}
+                onChange={(e) => setExportFormat(e.target.value)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
+              >
+                <option value="tar">tar</option>
+                <option value="zip">zip</option>
+                <option value="tar.gz">tar.gz</option>
+                <option value="rar">rar</option>
+              </select>
+            </div>
+
+            {exportResult && (
+              <div className="mt-4 flex flex-col items-center gap-2 text-sm text-slate-600">
+                <span>
+                  train {exportResult.counts.train} / val {exportResult.counts.val} / test {exportResult.counts.test}
+                </span>
+                <a
+                  href={`/api${exportResult.download}`}
+                  className="rounded-full border border-emerald-500/50 bg-emerald-500/10 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-500/20"
+                >
+                  Download
+                </a>
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowExportPanel(false)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doExportDataset}
+                disabled={exporting || datasetBatches.length === 0}
+                className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
+              >
+                {exporting ? 'Exporting...' : 'Export'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {createDatasetOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
@@ -3133,6 +3488,7 @@ function App() {
                       <button
                         key={batch.name}
                         type="button"
+                        title={batch.name}
                         onClick={() =>
                           setSelectedImportBatches((prev) => {
                             const next = new Set(prev)
@@ -3161,6 +3517,11 @@ function App() {
                             No image
                           </div>
                         )}
+                        <div className="absolute left-0 right-0 top-0 bg-black/70 px-2 py-1 text-left opacity-0 transition group-hover:opacity-100">
+                          <p className="text-[10px] font-medium text-white">
+                            {batch.name}
+                          </p>
+                        </div>
                         <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 text-left">
                           <p className="truncate text-[10px] font-medium text-white">
                             {batch.name}

@@ -134,6 +134,23 @@ def batch_first_image(batch: str):
 DEFAULT_SPLIT = {"train": 70, "val": 20, "test": 10}
 
 
+def _split_from_template(config: dict) -> dict:
+    folder = config.get("folder") or {}
+    ratio = folder.get("ratio") or {}
+    if not ratio:
+        return dict(DEFAULT_SPLIT)
+    converted = {}
+    for k, v in ratio.items():
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            continue
+        converted[k] = round(n * 100) if n <= 1 else int(n)
+    if not converted:
+        return dict(DEFAULT_SPLIT)
+    return converted
+
+
 def _load_manifest(manifest_path: Path):
     if not manifest_path.exists():
         return None
@@ -263,24 +280,38 @@ def make_thumbnail(video_path: Path, batch: str):
 
 @app.post("/upload/tar")
 def _process_uploaded_files(tmp_path: Path):
-    batch_name = next_batch_name(RAW_IMAGES_DIR)
-    batch_dir = RAW_IMAGES_DIR / batch_name
-    batch_dir.mkdir(parents=True)
-
     saved_images = []
     saved_videos = []
-    image_index = 1
+    folders = {}
+    batches = []
+
     for item in sorted(tmp_path.rglob("*")):
         if not item.is_file() or item.name.startswith("._"):
             continue
+        rel = item.relative_to(tmp_path)
+        source_name = rel.parts[-2] if len(rel.parts) > 1 else ""
+        if source_name not in folders:
+            if source_name:
+                batch_name = source_name
+            else:
+                batch_name = next_batch_name(RAW_IMAGES_DIR)
+            batch_dir = RAW_IMAGES_DIR / batch_name
+            batch_dir.mkdir(parents=True, exist_ok=True)
+            folders[source_name] = {"batch_name": batch_name, "batch_dir": batch_dir, "index": 1}
+            batches.append(batch_name)
+
         ext = item.suffix.lower()
         if ext in IMAGE_EXTENSIONS:
-            dest = batch_dir / f"raw-image-{batch_name}-{image_index}{ext}"
+            state = folders[source_name]
+            batch_name = state["batch_name"]
+            batch_dir = state["batch_dir"]
+            i = state["index"]
+            dest = batch_dir / f"{batch_name}-{i}{ext}"
             while dest.exists():
-                image_index += 1
-                dest = batch_dir / f"raw-image-{batch_name}-{image_index}{ext}"
+                i += 1
+                dest = batch_dir / f"{batch_name}-{i}{ext}"
             shutil.move(str(item), dest)
-            image_index += 1
+            state["index"] = i + 1
             saved_images.append(f"/uploads/raw-images/{batch_name}/{dest.name}")
         elif ext in VIDEO_EXTENSIONS:
             video_name = next_video_name()
@@ -293,7 +324,8 @@ def _process_uploaded_files(tmp_path: Path):
             saved_videos.append(f"/uploads/videos/{video_name}/{video_name}{ext}")
 
     return {
-        "batch": f"raw-images/{batch_name}",
+        "batch": f"raw-images/{batches[0]}" if batches else None,
+        "batches": [f"raw-images/{b}" for b in batches],
         "images": saved_images,
         "videos": saved_videos,
         "image_count": len(saved_images),
@@ -348,12 +380,16 @@ async def upload_image(file: UploadFile = File(...)):
 
     ext = Path(filename).suffix.lower()
     if ext in IMAGE_EXTENSIONS:
-        batch_name = next_batch_name(RAW_IMAGES_DIR)
+        parent = Path(filename).parent
+        source_name = parent.name if parent != Path(".") else ""
+        batch_name = source_name if source_name else next_batch_name(RAW_IMAGES_DIR)
         batch_dir = RAW_IMAGES_DIR / batch_name
-        batch_dir.mkdir(parents=True)
-        dest = batch_dir / f"raw-image-{batch_name}-1{ext}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        i = 1
+        dest = batch_dir / f"{batch_name}-{i}{ext}"
         while dest.exists():
-            dest = batch_dir / f"raw-image-{batch_name}-{uuid.uuid4().hex[:8]}{ext}"
+            i += 1
+            dest = batch_dir / f"{batch_name}-{i}{ext}"
         content = await file.read()
         dest.write_bytes(content)
         return {
@@ -546,7 +582,7 @@ def extract_frames(
                     if not found:
                         continue
                 frame_index += 1
-                name = f"video-batch-{batch_number}-{frame_index:04d}.jpg"
+                name = f"batch-{batch_number}-{frame_index}.jpg"
                 dest = imgs_batch_dir / name
                 img = Image.open(frame)
                 img.save(dest, "JPEG", quality=95)
@@ -587,7 +623,7 @@ def extract_frames(
                 y2 = min(h, y2 + margin)
                 crop = image.crop((x1, y1, x2, y2))
                 crop_index += 1
-                name = f"video-batch-{batch_number}-{crop_index:04d}.jpg"
+                name = f"batch-{batch_number}-{crop_index}.jpg"
                 dest = imgs_batch_dir / name
                 crop.save(dest, "JPEG", quality=95)
                 crop_urls.append(f"/uploads/videos/{filename}/imgs/{imgs_batch_dir.name}/{name}")
@@ -615,18 +651,19 @@ def generate_raw_images(source: str, payload: dict):
     ):
         raise HTTPException(status_code=404, detail="Source not found")
 
-    imgs_dir = source_dir / "imgs"
-    batch_name = next_batch_name(imgs_dir)
-    if mode == "crops":
-        batch_dir = imgs_dir / f"{batch_name}-crops"
-    else:
-        batch_dir = imgs_dir / batch_name
+    source_name = source_dir.name
+    batch_name = f"{source_name}-{mode}"
+    batch_dir = RAW_IMAGES_DIR / batch_name
+    if batch_dir.exists():
+        batch_name = f"{batch_name}-{uuid.uuid4().hex[:4]}"
+        batch_dir = RAW_IMAGES_DIR / batch_name
     batch_dir.mkdir(parents=True)
+    remove_source = bool(payload.get("remove_source", False))
 
     files = [
         p
         for p in source_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in _image_extensions()
+        if p.is_file() and p.name != ".source" and p.suffix.lower() in _image_extensions()
     ]
     if not files:
         return {"count": 0, "images": []}
@@ -635,13 +672,13 @@ def generate_raw_images(source: str, payload: dict):
     urls = []
 
     if mode == "use":
-        for f in files:
-            dest = batch_dir / f.name
-            if dest.exists():
-                dest = batch_dir / f"{uuid.uuid4().hex}_{f.name}"
+        for i, f in enumerate(files, 1):
+            dest = batch_dir / f"{batch_name}-{i}{f.suffix}"
             shutil.copy2(f, dest)
             urls.append(f"/uploads/{dest.relative_to(UPLOADS_DIR)}")
-        return {"count": len(urls), "images": urls}
+        if remove_source:
+            shutil.rmtree(source_dir)
+        return {"count": len(urls), "images": urls, "batch": str(batch_dir.relative_to(UPLOADS_DIR))}
 
     model = get_model()
     crop_index = 0
@@ -671,12 +708,14 @@ def generate_raw_images(source: str, payload: dict):
             y2 = min(h, y2 + margin)
             crop = image.crop((x1, y1, x2, y2))
             crop_index += 1
-            name = f"{batch_name}-{crop_index:04d}.jpg"
+            name = f"{batch_name}-{crop_index}.jpg"
             dest = batch_dir / name
             crop.save(dest, "JPEG", quality=95)
             urls.append(f"/uploads/{dest.relative_to(UPLOADS_DIR)}")
 
-    return {"count": len(urls), "images": urls}
+    if remove_source:
+        shutil.rmtree(source_dir)
+    return {"count": len(urls), "images": urls, "batch": str(batch_dir.relative_to(UPLOADS_DIR))}
 
 
 @app.post("/split-imports")
@@ -692,7 +731,7 @@ def split_imports(payload: dict):
     ):
         raise HTTPException(status_code=404, detail="Source batch not found")
 
-    files = [p for p in source_dir.iterdir() if p.is_file()]
+    files = [p for p in source_dir.iterdir() if p.is_file() and p.name != ".source"]
     if not files:
         return {"moved": 0, "batches": []}
 
@@ -754,12 +793,22 @@ def _dataset_summary(name: str, entry: dict):
                         if path:
                             previews.append(f"/uploads/{path}")
                             break
+    split = dict(DEFAULT_SPLIT)
+    framework = (entry.get("framework") or "").strip()
+    model = (entry.get("model") or "").strip()
+    if framework and model:
+        try:
+            config = load_template_config(_normalize_template_path(framework, model))
+            split = _split_from_template(config)
+        except HTTPException:
+            pass
     return {
         "name": name,
         "framework": entry.get("framework") or "",
         "model": entry.get("model") or "",
         "batches": batches,
         "previews": previews,
+        "split": split,
     }
 
 
@@ -896,11 +945,6 @@ def import_dataset_batch(name: str, payload: dict):
     attributes = config.get("attributes", [])
     if not attributes:
         raise HTTPException(status_code=400, detail="Template has no attributes")
-    all_indices = [idx for attr in attributes for idx in attr.get("indices", [])]
-    if not all_indices:
-        raise HTTPException(status_code=400, detail="Template has no indices")
-    vector_length = max(all_indices) + 1
-    zeros = ",".join(["0"] * vector_length)
     dataset_dir = DATASETS_DIR / dataset_dir_name
     dataset_dir.mkdir(parents=True, exist_ok=True)
     results = []
@@ -925,7 +969,7 @@ def import_dataset_batch(name: str, payload: dict):
         lines = []
         for img in images:
             rel = img.relative_to(UPLOADS_DIR)
-            lines.append(f"{rel.as_posix()}\t{zeros}")
+            lines.append(f"{rel.as_posix()}")
         txt_path.write_text("\n".join(lines))
         results.append({
             "file": f"/datasets/{dataset_dir_name}/{txt_name}",
@@ -960,20 +1004,64 @@ def set_dataset_template(name: str, payload: dict):
     return {"dataset": name, "framework": framework, "model": model}
 
 
-def _prelabel_image(image_path: Path, model_dir: Path) -> list[int]:
-    # Real inference: load the extracted Paddle model and run it on image_path.
-    # This is a stub; install paddlepaddle/paddleclas to replace it.
+def _create_prelabel_predictor(model_dir: Path):
     try:
-        import paddle  # noqa: F401
-    except ImportError:
+        import paddle
+        from paddle.inference import Config, create_predictor
+    except ImportError as e:
         raise HTTPException(
             status_code=400,
-            detail="PaddlePaddle is not installed; pre-label inference not available",
+            detail=f"PaddlePaddle not installed: {e}",
         )
-    raise HTTPException(
-        status_code=501,
-        detail="Pre-label inference is not yet implemented",
-    )
+
+    model_file = next((p for p in model_dir.rglob("inference.pdmodel")), None)
+    params_file = next((p for p in model_dir.rglob("inference.pdiparams")), None)
+    if not model_file or not params_file:
+        raise HTTPException(status_code=404, detail="Model pdmodel/pdiparams not found")
+
+    config = Config(str(model_file), str(params_file))
+    config.disable_gpu()
+    config.enable_mkldnn()
+    config.set_cpu_math_library_num_threads(10)
+    config.disable_glog_info()
+    config.switch_ir_optim(True)
+    config.enable_memory_optim()
+    config.switch_use_feed_fetch_ops(False)
+    config.switch_ir_optim(True)
+
+    predictor = create_predictor(config)
+    input_names = predictor.get_input_names()
+    input_tensor = predictor.get_input_handle(input_names[0])
+    output_names = predictor.get_output_names()
+    output_tensor = predictor.get_output_handle(output_names[0])
+
+    return predictor, input_tensor, output_tensor
+
+
+def _prelabel_image(image_path: Path, model_parts) -> list[int]:
+    import cv2
+    import numpy as np
+
+    predictor, input_tensor, output_tensor = model_parts
+    img = cv2.imread(str(image_path))
+    if img is None:
+        raise HTTPException(status_code=400, detail=f"Cannot read image {image_path}")
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.resize(img, (192, 256), interpolation=cv2.INTER_LINEAR)
+    img = img.astype(np.float32) / 255.0
+    img = (img - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
+    img = img.transpose((2, 0, 1))
+    batch = np.expand_dims(img, axis=0).astype("float32")
+
+    input_tensor.copy_from_cpu(batch)
+    predictor.run()
+    output = output_tensor.copy_to_cpu()
+
+    res = output[0].tolist()
+    threshold_list = [0.5] * len(res)
+    threshold_list[1] = 0.3   # glasses
+    threshold_list[18] = 0.6  # hold objects in front
+    return [int(v > t) for v, t in zip(res, threshold_list)]
 
 
 @app.post("/datasets/{name:path}/prelabel")
@@ -1012,6 +1100,7 @@ def prelabel_dataset(name: str):
 
     annotations = load_annotations(dir_name)
     count = 0
+    model_parts = _create_prelabel_predictor(model_dir)
     for txt in dataset_dir.glob("*.txt"):
         for line in txt.read_text().splitlines():
             if not line.strip():
@@ -1025,7 +1114,7 @@ def prelabel_dataset(name: str):
                 or not img_path.is_relative_to(UPLOADS_DIR.resolve())
             ):
                 continue
-            values = _prelabel_image(img_path, model_dir)
+            values = _prelabel_image(img_path, model_parts)
             annotations[f"/uploads/{path}"] = values
             count += 1
 
@@ -1154,33 +1243,49 @@ def set_dataset_split(name: str, payload: dict):
 
 @app.post("/datasets/{name}/export")
 def export_dataset(name: str, payload: dict | None = None):
+    from urllib.parse import unquote
     payload = payload or {}
+    name = unquote(name)
     datasets = load_datasets()
-    entry = datasets[name]
-    template_name = payload.get("template") or entry.get("template") or "paddlepaddle"
-
     if name not in datasets:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    batches = entry["batches"]
-    split = entry["split"]
+    entry = datasets[name]
+    dir_name = entry.get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset_dir = DATASETS_DIR / dir_name
+    if not dataset_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Dataset not found")
 
-    if not batches:
-        raise HTTPException(status_code=400, detail="No batches assigned to this dataset")
+    framework = (entry.get("framework") or "").strip()
+    model = (entry.get("model") or "").strip()
+    if not framework or not model:
+        raise HTTPException(status_code=400, detail="Dataset framework/model not set")
+    config = load_template_config(_normalize_template_path(framework, model))
+    split = payload.get("split") or _split_from_template(config)
+    try:
+        split = {k: int(v) for k, v in split.items()}
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Split values must be numbers")
     if sum(split.values()) != 100:
         raise HTTPException(status_code=400, detail="Split ratios must sum to 100")
 
-    config_path = TEMPLATES_DIR / template_name / "config.yaml"
-    if not config_path.exists():
-        raise HTTPException(status_code=404, detail=f"Template '{template_name}' not found")
-    config = yaml.safe_load(config_path.read_text()) or {}
-    folder_map = config.get("folder", {})
-    text_map = config.get("text", {})
+    folder_config = config.get("folder") or {}
+    folder_map = {name: name for name in folder_config.get("structure", ["train", "val", "test"])}
+    text_map = config.get("text", {}) or {}
 
     files = []
-    for batch in batches:
-        batch_dir = (UPLOADS_DIR / batch).resolve()
-        if batch_dir.is_dir() and batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
-            files.extend(sorted(p for p in batch_dir.iterdir() if p.is_file()))
+    for txt in sorted(dataset_dir.glob("*.txt")):
+        for line in txt.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            path = line.split("\t")[0].strip()
+            if not path:
+                continue
+            img = (UPLOADS_DIR / path).resolve()
+            if img.is_file() and img.is_relative_to(UPLOADS_DIR.resolve()):
+                files.append(img)
     if not files:
         raise HTTPException(status_code=400, detail="No images found in assigned batches")
 
@@ -1196,7 +1301,7 @@ def export_dataset(name: str, payload: dict | None = None):
         "test": files[n_train + n_val:],
     }
 
-    annotations = load_annotations(name)
+    annotations = load_annotations(dir_name)
     attr_groups = config.get("attributes", [])
     if attr_groups:
         vector_length = max(max(g.get("indices", [0]) or [0]) for g in attr_groups) + 1
@@ -1204,7 +1309,7 @@ def export_dataset(name: str, payload: dict | None = None):
         vector_length = 26
     default_values = [0] * vector_length
 
-    dataset_dir = DATASETS_DIR / name
+    from urllib.parse import quote
     export_dir = dataset_dir / "export"
     if export_dir.exists():
         shutil.rmtree(export_dir)
@@ -1224,7 +1329,7 @@ def export_dataset(name: str, payload: dict | None = None):
                 dest = target_dir / f"{uuid.uuid4().hex[:8]}_{f.name}"
             shutil.copy2(f, dest)
             rel = f.relative_to(UPLOADS_DIR)
-            source_url = f"/uploads/{rel}"
+            source_url = f"/uploads/{rel.as_posix()}"
             values = annotations.get(source_url, default_values)
             if source_url not in annotations:
                 missing_annotations += 1
@@ -1239,28 +1344,72 @@ def export_dataset(name: str, payload: dict | None = None):
         )
         counts[split_name] = len(split_list)
 
-    tar_path = dataset_dir / f"{name}.tar"
-    if tar_path.exists():
-        tar_path.unlink()
-    with tarfile.open(tar_path, "w") as tar:
-        for item in sorted(export_dir.iterdir()):
-            tar.add(item, arcname=item.name)
+    export_format = (payload.get("format") or "tar").strip().lower()
+    format_map = {
+        "tar": ("tar", "w", "application/x-tar"),
+        "zip": ("zip", None, "application/zip"),
+        "tar.gz": ("tar.gz", "w:gz", "application/gzip"),
+        "rar": ("rar", None, "application/vnd.rar"),
+    }
+    if export_format not in format_map:
+        raise HTTPException(status_code=400, detail="Unsupported export format")
+
+    ext, tar_mode, media_type = format_map[export_format]
+    archive_path = dataset_dir / f"{dir_name}.{ext}"
+    if archive_path.exists():
+        archive_path.unlink()
+
+    if export_format == "zip":
+        import zipfile
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as z:
+            for item in sorted(export_dir.iterdir()):
+                z.write(item, arcname=item.name)
+    elif export_format == "rar":
+        import subprocess
+        if not shutil.which("rar"):
+            raise HTTPException(status_code=400, detail="rar binary not installed")
+        subprocess.run(
+            ["rar", "a", "-r", str(archive_path), str(export_dir)],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        with tarfile.open(archive_path, tar_mode) as tar:
+            for item in sorted(export_dir.iterdir()):
+                tar.add(item, arcname=item.name)
 
     return {
         "dataset": name,
-        "template": template_name,
+        "template": "",
         "counts": counts,
         "missing_annotations": missing_annotations,
-        "download": f"/datasets/{name}/download",
+        "format": export_format,
+        "download": f"/datasets/{quote(name, safe='')}/download?format={export_format}",
     }
 
 
 @app.get("/datasets/{name}/download")
-def download_dataset(name: str):
-    tar_path = DATASETS_DIR / name / f"{name}.tar"
-    if not tar_path.exists():
+def download_dataset(name: str, format: str = "tar"):
+    from urllib.parse import unquote
+    name = unquote(name)
+    datasets = load_datasets()
+    if name not in datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    dir_name = datasets[name].get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    format_map = {
+        "tar": ("tar", "application/x-tar"),
+        "zip": ("zip", "application/zip"),
+        "tar.gz": ("tar.gz", "application/gzip"),
+        "rar": ("rar", "application/vnd.rar"),
+    }
+    export_format = (format or "tar").strip().lower()
+    ext, media_type = format_map.get(export_format, format_map["tar"])
+    archive_path = DATASETS_DIR / dir_name / f"{dir_name}.{ext}"
+    if not archive_path.exists():
         raise HTTPException(status_code=404, detail="Export not found. Run export first.")
-    return FileResponse(tar_path, filename=f"{name}.tar", media_type="application/x-tar")
+    return FileResponse(archive_path, filename=f"{name}.{ext}", media_type=media_type)
 
 
 def _batch_directories():
@@ -1321,12 +1470,12 @@ def list_images(batch: str | None = None):
         return name.endswith("-crops")
 
     def _batch_category(batch_dir: Path) -> str:
+        if batch_dir.resolve().is_relative_to(RAW_IMAGES_DIR.resolve()):
+            return "imported"
         if _is_frames_batch(batch_dir.name):
             return "frames"
         if _is_crops_batch(batch_dir.name):
             return "crops"
-        if batch_dir.resolve().is_relative_to(RAW_IMAGES_DIR.resolve()):
-            return "imported"
         return "frames"
 
     result = {"imported": [], "frames": [], "crops": []}
@@ -1372,14 +1521,17 @@ def delete_images(payload: dict):
         with DATASETS_LOCK:
             datasets = load_datasets()
         for name in datasets:
+            dir_name = datasets[name].get("dir")
+            if not dir_name:
+                continue
             with annotation_lock(name):
-                annotations = load_annotations(name)
+                annotations = load_annotations(dir_name)
                 changed = False
                 for url in deleted:
                     if url in annotations:
                         del annotations[url]
                         changed = True
                 if changed:
-                    save_annotations(name, annotations)
+                    save_annotations(dir_name, annotations)
 
     return {"deleted": len(deleted)}

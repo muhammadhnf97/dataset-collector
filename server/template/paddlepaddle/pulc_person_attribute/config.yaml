@@ -43,5 +43,13 @@ attributes:
     type: single
     indices: [23, 24, 25]
     options: [Front, Side, Back]
-
 text-format: "path/filename.jpg	0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,1"
+folder:
+  structure:
+    - train
+    - val
+    - test
+  ratio:
+    train: 0.8
+    val: 0.1
+    test: 0.1
