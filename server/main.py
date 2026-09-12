@@ -1122,6 +1122,77 @@ def prelabel_dataset(name: str):
     return {"dataset": name, "images": count}
 
 
+@app.post("/datasets/{name:path}/images/remove")
+def remove_dataset_image(name: str, payload: dict):
+    name = unquote(name)
+    image = (payload.get("image") or "").strip()
+    if not image:
+        raise HTTPException(status_code=400, detail="Image path required")
+    datasets = load_datasets()
+    if name not in datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    dir_name = datasets[name].get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset_dir = DATASETS_DIR / dir_name
+    removed_lines = 0
+    for txt in dataset_dir.glob("*.txt"):
+        lines = txt.read_text().splitlines()
+        kept = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            path = line.split("\t")[0].strip()
+            src = f"/uploads/{path}"
+            if src == image:
+                removed_lines += 1
+                continue
+            kept.append(line)
+        if len(kept) != len(lines):
+            txt.write_text("\n".join(kept) + ("\n" if kept else ""))
+    with annotation_lock(name):
+        annotations = load_annotations(dir_name)
+        if image in annotations:
+            del annotations[image]
+            save_annotations(dir_name, annotations)
+    return {"removed": removed_lines}
+
+
+@app.post("/datasets/{name:path}/batches/{batch:path}/remove")
+def remove_dataset_batch(name: str, batch: str):
+    name = unquote(name)
+    batch = unquote(batch)
+    if not batch or any(c in batch for c in ("/", "\\", "..")):
+        raise HTTPException(status_code=400, detail="Invalid batch")
+    datasets = load_datasets()
+    if name not in datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    dir_name = datasets[name].get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset_dir = DATASETS_DIR / dir_name
+    txt_path = (dataset_dir / f"{batch}.txt").resolve()
+    if not txt_path.is_relative_to(dataset_dir.resolve()) or not txt_path.is_file():
+        raise HTTPException(status_code=404, detail="Batch not found")
+    removed = []
+    for line in txt_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        path = line.split("\t")[0].strip()
+        if path:
+            removed.append(f"/uploads/{path}")
+    txt_path.unlink()
+    with annotation_lock(name):
+        annotations = load_annotations(dir_name)
+        for url in removed:
+            if url in annotations:
+                del annotations[url]
+        save_annotations(dir_name, annotations)
+    return {"removed": len(removed)}
+
+
 @app.get("/datasets/{name:path}/images")
 def get_dataset_images(name: str):
     name = unquote(name)
@@ -1275,7 +1346,11 @@ def export_dataset(name: str, payload: dict | None = None):
     text_map = config.get("text", {}) or {}
 
     files = []
+    selected_batches = payload.get("batches") or []
+    selected_set = set(selected_batches)
     for txt in sorted(dataset_dir.glob("*.txt")):
+        if selected_set and txt.stem not in selected_set:
+            continue
         for line in txt.read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
@@ -1287,7 +1362,7 @@ def export_dataset(name: str, payload: dict | None = None):
             if img.is_file() and img.is_relative_to(UPLOADS_DIR.resolve()):
                 files.append(img)
     if not files:
-        raise HTTPException(status_code=400, detail="No images found in assigned batches")
+        raise HTTPException(status_code=400, detail="No images found in selected batches")
 
     random.shuffle(files)
     total = len(files)

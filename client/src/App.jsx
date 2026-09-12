@@ -121,7 +121,7 @@ function Filmstrip({ images, index, marked, onSelect }) {
   return (
     <div
       ref={stripRef}
-      className="absolute left-0 right-0 top-0 z-10 flex gap-2 overflow-x-auto border-b border-white/10 bg-black/50 px-3 py-2.5 backdrop-blur-md"
+      className="absolute left-0 right-0 top-0 z-10 flex gap-2 overflow-x-auto border-b border-slate-200 bg-slate-100/80 px-3 py-2.5 backdrop-blur-md"
       onClick={(e) => e.stopPropagation()}
     >
       {images.map((image, i) => (
@@ -136,9 +136,9 @@ function Filmstrip({ images, index, marked, onSelect }) {
           }}
           className={`h-16 w-28 shrink-0 cursor-pointer rounded-md object-cover shadow-md transition duration-150 ${
             marked?.has(image)
-              ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-black'
+              ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-slate-100'
               : i === index
-                ? 'ring-2 ring-white ring-offset-2 ring-offset-black'
+                ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-slate-100'
                 : 'opacity-50 hover:opacity-90'
           }`}
         />
@@ -165,10 +165,14 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm px-6 py-4"
       onClick={onClose}
     >
-      <Filmstrip images={images} index={index} onSelect={onSelect} />
+      <div
+        className="relative flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-2xl backdrop-blur-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Filmstrip images={images} index={index} onSelect={onSelect} />
 
       {onRemove && (
         <button
@@ -177,7 +181,7 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
             e.stopPropagation()
             onRemove(images[index])
           }}
-          className="absolute left-4 top-24 z-10 flex h-10 items-center justify-center gap-1.5 rounded-full border border-white/10 bg-red-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-red-500"
+          className="absolute left-4 top-24 z-10 flex h-10 items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-red-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-red-500"
         >
           Remove
         </button>
@@ -186,7 +190,7 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
       <button
         type="button"
         onClick={onClose}
-        className="absolute right-4 top-24 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/10 text-xl text-white backdrop-blur-md transition hover:bg-white/20"
+        className="absolute right-4 top-24 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-slate-300 bg-slate-200 text-xl text-slate-800 backdrop-blur-md transition hover:bg-slate-300"
       >
         ×
       </button>
@@ -197,7 +201,7 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
           e.stopPropagation()
           onNavigate(-1)
         }}
-        className="absolute left-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white backdrop-blur-md transition hover:scale-105 hover:bg-white/20"
+        className="absolute left-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-slate-300 bg-slate-200 text-slate-800 backdrop-blur-md transition hover:scale-105 hover:bg-slate-300"
       >
         <ArrowIcon direction="left" className="h-6 w-6" />
       </button>
@@ -205,7 +209,7 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
       <img
         src={`/api${images[index]}`}
         alt=""
-        className="h-[78vh] w-[90vw] rounded-lg object-contain shadow-2xl"
+        className="h-full w-full object-contain p-4"
       />
 
       <button
@@ -214,14 +218,15 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
           e.stopPropagation()
           onNavigate(1)
         }}
-        className="absolute right-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white backdrop-blur-md transition hover:scale-105 hover:bg-white/20"
+        className="absolute right-4 top-1/2 z-10 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-slate-300 bg-slate-200 text-slate-800 backdrop-blur-md transition hover:scale-105 hover:bg-slate-300"
       >
         <ArrowIcon direction="right" className="h-6 w-6" />
       </button>
 
-      <span className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-sm font-medium text-white backdrop-blur-md">
+      <span className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full border border-slate-300 bg-slate-200 px-4 py-1.5 text-sm font-medium text-slate-800 backdrop-blur-md">
         {index + 1} / {images.length}
       </span>
+    </div>
     </div>
   )
 }
@@ -343,6 +348,29 @@ function RemoveModeModal({
 }
 
 function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel = 'Delete' }) {
+  const confirmRef = useRef(null)
+  const onConfirmRef = useRef(onConfirm)
+  const onCancelRef = useRef(onCancel)
+  onConfirmRef.current = onConfirm
+  onCancelRef.current = onCancel
+
+  useEffect(() => {
+    confirmRef.current?.focus()
+    const handleKey = (e) => {
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        onConfirmRef.current()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        onCancelRef.current()
+      }
+    }
+    window.addEventListener('keydown', handleKey, true)
+    return () => window.removeEventListener('keydown', handleKey, true)
+  }, [])
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-80 rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
@@ -378,6 +406,7 @@ function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel
             Cancel
           </button>
           <button
+            ref={confirmRef}
             type="button"
             onClick={onConfirm}
             className="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-red-500/30 transition hover:bg-red-600"
@@ -435,8 +464,6 @@ function App() {
   const [videoToDelete, setVideoToDelete] = useState(null)
   const [videoImages, setVideoImages] = useState([])
   const [videoModalIndex, setVideoModalIndex] = useState(null)
-  const [removeVideoImageUrl, setRemoveVideoImageUrl] = useState(null)
-  const [confirmingRemoveVideoImage, setConfirmingRemoveVideoImage] = useState(false)
   const [confirmingRemoveVideoBatch, setConfirmingRemoveVideoBatch] = useState(false)
   const [rawSelectedClasses, setRawSelectedClasses] = useState([])
   const [rawConfidence, setRawConfidence] = useState(70)
@@ -477,6 +504,9 @@ function App() {
   const [removeIndex, setRemoveIndex] = useState(0)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [confirmingRemoveImage, setConfirmingRemoveImage] = useState(false)
+  const [confirmingRemoveAttrImage, setConfirmingRemoveAttrImage] = useState(false)
+  const [confirmingRemoveDatasetBatch, setConfirmingRemoveDatasetBatch] = useState(false)
+  const [datasetBatchToRemove, setDatasetBatchToRemove] = useState('')
   const [splitCount, setSplitCount] = useState(2)
   const [splitConfirmOpen, setSplitConfirmOpen] = useState(false)
   const [deleteBatchConfirmOpen, setDeleteBatchConfirmOpen] = useState(false)
@@ -495,8 +525,10 @@ function App() {
     val: 20,
     test: 10,
   })
+  const attrStripRef = useRef(null)
   const [exportResult, setExportResult] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [selectedExportBatches, setSelectedExportBatches] = useState([])
   const [newDatasetName, setNewDatasetName] = useState('')
   const [createDatasetOpen, setCreateDatasetOpen] = useState(false)
   const [createDatasetName, setCreateDatasetName] = useState('')
@@ -724,35 +756,6 @@ function App() {
       setStatus(`Deleted ${deleted} dataset${deleted === 1 ? '' : 's'}`)
     } else {
       setStatus(`Deleted ${deleted}, failed ${failed}`)
-    }
-  }
-
-  const doRemoveVideoImage = async () => {
-    if (!removeVideoImageUrl) return
-    setConfirmingRemoveVideoImage(false)
-    const oldIndex = videoModalIndex ?? 0
-    const newLength = videoImages.length - 1
-    const nextIndex =
-      newLength > 0
-        ? Math.min(oldIndex >= newLength ? newLength - 1 : oldIndex, newLength - 1)
-        : null
-    try {
-      const response = await fetch('/api/images/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paths: [removeVideoImageUrl] }),
-      })
-      if (response.ok) {
-        setRemoveVideoImageUrl(null)
-        setVideoModalIndex(nextIndex)
-        fetchVideoImages(selectedFilename)
-        fetchImages()
-        setStatus('Image removed')
-      } else {
-        setStatus('Failed to remove image')
-      }
-    } catch {
-      setStatus('Failed: could not reach the server')
     }
   }
 
@@ -1124,6 +1127,64 @@ function App() {
     setAttrAnnotate((s) => ({ ...s, imgIndex: prev }))
   }
 
+  const removeFromDatasetImage = async () => {
+    setConfirmingRemoveAttrImage(false)
+    if (!attrAnnotate) return
+    const image = attrAnnotate.images[attrAnnotate.imgIndex]
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(attrAnnotate.dataset)}/images/remove`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setStatus(`Removed image from dataset`)
+      await refreshDataset(attrAnnotate.dataset)
+      setAttrAnnotate((state) => {
+        if (!state) return state
+        const newImages = state.images.filter((s) => s !== image)
+        const newAnnotations = { ...state.annotations }
+        delete newAnnotations[image]
+        if (newImages.length === 0) {
+          return null
+        }
+        const nextIndex = Math.min(state.imgIndex, newImages.length - 1)
+        return { ...state, images: newImages, annotations: newAnnotations, imgIndex: nextIndex }
+      })
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const removeDatasetBatch = async () => {
+    setConfirmingRemoveDatasetBatch(false)
+    if (!activeDataset || !datasetBatchToRemove) return
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/batches/${encodeURIComponent(datasetBatchToRemove)}/remove`,
+        {
+          method: 'POST',
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setStatus(`Removed ${data.removed} image${data.removed === 1 ? '' : 's'} from dataset`)
+      await refreshDataset(activeDataset)
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
   const annotateValuesFor = (image) => {
     if (!annotate) return []
     return annotate.annotations[image] ?? Array(annotate.length).fill(0)
@@ -1383,6 +1444,10 @@ function App() {
       setStatus(`Split must sum to 100 (currently ${total})`)
       return
     }
+    if (selectedExportBatches.length === 0) {
+      setStatus('Select at least one batch to export')
+      return
+    }
     setExporting(true)
     setExportResult(null)
     setStatus(`Exporting ${activeDataset}...`)
@@ -1392,7 +1457,11 @@ function App() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ split: datasetSplit, format: exportFormat }),
+          body: JSON.stringify({
+            split: datasetSplit,
+            format: exportFormat,
+            batches: selectedExportBatches,
+          }),
         },
       )
       const data = await response.json()
@@ -1666,7 +1735,6 @@ function App() {
       if (e.key === 'ArrowRight' || e.key === 'Enter') wizardNext()
       if (e.key === ' ') wizardToggle()
       if (e.key === 'Escape') setAnnotate(null)
-      if (e.key === 'x' || e.key === 'X') requestRemoveImage()
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
@@ -1705,10 +1773,26 @@ function App() {
           applyAttrValue(-1, false)
         }
       }
+      if (e.key === 'x' || e.key === 'X') {
+        setConfirmingRemoveAttrImage(true)
+      }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
   }, [attrAnnotate])
+
+  useEffect(() => {
+    if (!attrAnnotate) return
+    const el = attrStripRef.current?.querySelector('[data-active="true"]')
+    el?.scrollIntoView({ inline: 'center', block: 'nearest' })
+  }, [attrAnnotate?.imgIndex])
+
+  useEffect(() => {
+    if (showExportPanel) {
+      setSelectedExportBatches(datasetBatches)
+      setExportResult(null)
+    }
+  }, [showExportPanel, datasetBatches])
 
   const handleFileChange = async (event) => {
     const files = event.target.files ? Array.from(event.target.files) : []
@@ -2597,6 +2681,18 @@ function App() {
                     ))}
                   </select>
                 )}
+                {datasetBatchFilter && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDatasetBatchToRemove(datasetBatchFilter)
+                      setConfirmingRemoveDatasetBatch(true)
+                    }}
+                    className="rounded-full bg-red-500/10 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-500/20"
+                  >
+                    Remove from dataset
+                  </button>
+                )}
                 <div className="ml-auto flex items-center gap-2">
                   <select
                     value=""
@@ -2708,10 +2804,6 @@ function App() {
         onClose={() => setVideoModalIndex(null)}
         onNavigate={navigateVideoModal}
         onSelect={setVideoModalIndex}
-        onRemove={(src) => {
-          setRemoveVideoImageUrl(src)
-          setConfirmingRemoveVideoImage(true)
-        }}
       />
 
       <ImageModal
@@ -2748,25 +2840,39 @@ function App() {
                   ))}
                 </select>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setAttrAnnotate(null)
-                }}
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-slate-700 transition hover:bg-slate-300"
-              >
-                ×
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  title="Remove from dataset"
+                  onClick={() => setConfirmingRemoveAttrImage(true)}
+                  className="flex h-9 items-center gap-1.5 rounded-full bg-red-500/80 px-3 text-sm font-medium text-white transition hover:bg-red-500"
+                >
+                  Remove
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttrAnnotate(null)
+                  }}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-slate-700 transition hover:bg-slate-300"
+                >
+                  ×
+                </button>
+              </div>
             </div>
 
             {attrAnnotate.images.length > 0 && (
-              <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-slate-200 bg-slate-100/80 p-2">
+              <div
+                ref={attrStripRef}
+                className="flex shrink-0 gap-2 overflow-x-auto border-b border-slate-200 bg-slate-100/80 p-2"
+              >
                 {attrAnnotate.images.map((src, i) => {
                   const isAnnotated = attrAnnotate.annotations[src] !== undefined
                   return (
                     <button
                       key={src}
                       type="button"
+                      data-active={i === attrAnnotate.imgIndex}
                       onClick={() =>
                         setAttrAnnotate((s) => ({ ...s, imgIndex: i }))
                       }
@@ -2896,14 +3002,6 @@ function App() {
                 {annotate.dataset}{annotate.batchFilter ? ` (${annotate.batchFilter})` : ''} · {annotate.index + 1} / {annotate.images.length}
               </span>
               <div className="ml-auto flex items-center gap-2">
-                <button
-                  type="button"
-                  title="Remove image (X)"
-                  onClick={requestRemoveImage}
-                  className="flex h-9 items-center gap-1.5 rounded-full bg-red-500/80 px-3 text-sm font-medium text-white transition hover:bg-red-500"
-                >
-                  Remove
-                </button>
                 <button
                   type="button"
                   onClick={() => setAnnotate(null)}
@@ -3223,6 +3321,26 @@ function App() {
         />
       )}
 
+      {confirmingRemoveAttrImage && (
+        <ConfirmModal
+          count={1}
+          title="Remove from this dataset ?"
+          message="This removes the image from the dataset list only. The original file will not be deleted."
+          onCancel={() => setConfirmingRemoveAttrImage(false)}
+          onConfirm={removeFromDatasetImage}
+        />
+      )}
+
+      {confirmingRemoveDatasetBatch && (
+        <ConfirmModal
+          count={(datasetImageGroups[datasetBatchToRemove] ?? []).length}
+          title={`Remove ${datasetBatchToRemove}?`}
+          message="This removes all images in this batch from the dataset. The original files will not be deleted."
+          onCancel={() => setConfirmingRemoveDatasetBatch(false)}
+          onConfirm={removeDatasetBatch}
+        />
+      )}
+
       {confirmingRemoveVideos && (
         <ConfirmModal
           count={selectedVideosToRemove.size}
@@ -3230,16 +3348,6 @@ function App() {
           message="This will permanently remove the selected videos and all their extracted images. This action cannot be undone."
           onCancel={() => setConfirmingRemoveVideos(false)}
           onConfirm={doDeleteSelectedVideos}
-        />
-      )}
-
-      {confirmingRemoveVideoImage && (
-        <ConfirmModal
-          count={1}
-          title="Remove image?"
-          message="This image will be permanently deleted. This action cannot be undone."
-          onCancel={() => setConfirmingRemoveVideoImage(false)}
-          onConfirm={doRemoveVideoImage}
         />
       )}
 
@@ -3339,6 +3447,56 @@ function App() {
               </select>
             </div>
 
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-medium text-slate-700">
+                  Batches
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedExportBatches(
+                      selectedExportBatches.length === datasetBatches.length
+                        ? []
+                        : [...datasetBatches],
+                    )
+                  }
+                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                >
+                  {selectedExportBatches.length === datasetBatches.length
+                    ? 'Deselect all'
+                    : 'Select all'}
+                </button>
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
+                {datasetBatches.length === 0 && (
+                  <p className="text-sm text-slate-500">No batches imported</p>
+                )}
+                {datasetBatches.map((batch) => (
+                  <label
+                    key={batch}
+                    className="flex items-center gap-2 py-1 text-sm text-slate-700"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedExportBatches.includes(batch)}
+                      onChange={(e) =>
+                        setSelectedExportBatches((prev) =>
+                          e.target.checked
+                            ? [...new Set([...prev, batch])]
+                            : prev.filter((b) => b !== batch),
+                        )
+                      }
+                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <span className="truncate" title={batch}>
+                      {batch}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
             {exportResult && (
               <div className="mt-4 flex flex-col items-center gap-2 text-sm text-slate-600">
                 <span>
@@ -3364,7 +3522,7 @@ function App() {
               <button
                 type="button"
                 onClick={doExportDataset}
-                disabled={exporting || datasetBatches.length === 0}
+                disabled={exporting || selectedExportBatches.length === 0}
                 className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
               >
                 {exporting ? 'Exporting...' : 'Export'}
