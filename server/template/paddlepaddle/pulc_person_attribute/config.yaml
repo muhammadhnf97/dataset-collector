@@ -1,5 +1,5 @@
-model-name: "paddlepaddle"
-model-category: "pulc_person_attribute"
+framework-name: "PaddlePaddle"
+model-name: "PULC_person_attribute"
 model-annotation: "text"
 attributes:
   - name: Hat

@@ -148,10 +148,14 @@ def _save_manifest(dir_name: str, data: dict):
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
         "name": data.get("name", dir_name),
+        "framework": data.get("framework") or "",
         "model": data.get("model") or "",
-        "category": data.get("category") or "",
     }
     atomic_write_json(manifest_path, manifest)
+
+
+def _normalize_template_path(framework: str, model: str) -> str:
+    return "/".join(p.lower() for p in [framework, model] if p)
 
 
 def load_datasets():
@@ -164,6 +168,13 @@ def load_datasets():
         manifest = _load_manifest(d / "manifest.json")
         if not manifest:
             continue
+        # Migrate old manifests that used model/category to framework/model
+        if "category" in manifest and "framework" not in manifest:
+            manifest = {
+                "name": manifest.get("name"),
+                "framework": manifest.get("model") or "",
+                "model": manifest.get("category") or "",
+            }
         name = manifest.get("name") or d.name
         manifest["dir"] = d.name
         datasets[name] = manifest
@@ -745,8 +756,8 @@ def _dataset_summary(name: str, entry: dict):
                             break
     return {
         "name": name,
+        "framework": entry.get("framework") or "",
         "model": entry.get("model") or "",
-        "category": entry.get("category") or "",
         "batches": batches,
         "previews": previews,
     }
@@ -765,7 +776,7 @@ def list_template_names():
 
 
 def load_template_config(template_name: str):
-    template_name = unquote(template_name)
+    template_name = unquote(template_name).lower()
     config_path = (TEMPLATES_DIR / template_name / "config.yaml").resolve()
     if (
         not config_path.is_relative_to(TEMPLATES_DIR.resolve())
@@ -780,9 +791,14 @@ def get_templates():
     templates = []
     for name in list_template_names():
         config = load_template_config(name)
-        label = config.get("model-category") or config.get("label") or name
-        model = name.split("/", 1)[0] if "/" in name else name
-        templates.append({"name": name, "label": label, "model": model})
+        framework = (
+            config.get("framework-name")
+            or name.split("/", 1)[0]
+            if "/" in name
+            else name
+        )
+        label = config.get("model-name") or config.get("model-category") or name
+        templates.append({"name": name, "label": label, "framework": framework})
     return {"templates": templates}
 
 
@@ -803,6 +819,15 @@ def create_dataset(payload: dict):
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Dataset name required")
+
+    framework = (payload.get("framework") or "").strip()
+    model = (payload.get("model") or "").strip()
+    template = (payload.get("template") or "").strip()
+    if not framework and not model and template:
+        config = load_template_config(template)
+        framework = (config.get("framework-name") or "").strip()
+        model = (config.get("model-name") or "").strip()
+
     with DATASETS_LOCK:
         datasets = load_datasets()
         if name in datasets:
@@ -811,8 +836,8 @@ def create_dataset(payload: dict):
         (DATASETS_DIR / dataset_dir_name).mkdir(parents=True)
         manifest = {
             "name": name,
-            "model": (payload.get("model") or "").strip(),
-            "category": (payload.get("category") or "").strip(),
+            "framework": framework,
+            "model": model,
         }
         _save_manifest(dataset_dir_name, manifest)
     return {"dataset": name}
@@ -861,11 +886,13 @@ def import_dataset_batch(name: str, payload: dict):
     dataset_dir_name = entry.get("dir")
     if not dataset_dir_name:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    framework = (entry.get("framework") or "").strip()
     model = (entry.get("model") or "").strip()
-    category = (entry.get("category") or "").strip()
-    if not model or not category:
-        raise HTTPException(status_code=400, detail="Dataset model/category not set")
-    config = load_template_config(f"{model}/{category}")
+    if not framework or not model:
+        raise HTTPException(status_code=400, detail="Dataset framework/model not set")
+    config = load_template_config(
+        _normalize_template_path(framework, model)
+    )
     attributes = config.get("attributes", [])
     if not attributes:
         raise HTTPException(status_code=400, detail="Template has no attributes")
@@ -919,13 +946,18 @@ def set_dataset_template(name: str, payload: dict):
         raise HTTPException(status_code=400, detail="Template name required")
     if template_name not in list_template_names():
         raise HTTPException(status_code=404, detail=f"Template '{template_name}' not found")
+    config = load_template_config(template_name)
+    framework = (config.get("framework-name") or "").strip()
+    model = (config.get("model-name") or "").strip()
     with DATASETS_LOCK:
         datasets = load_datasets()
         if name not in datasets:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        datasets[name]["template"] = template_name
+        entry = datasets[name]
+        entry["framework"] = framework
+        entry["model"] = model
         save_datasets(datasets)
-    return {"dataset": name, "template": template_name}
+    return {"dataset": name, "framework": framework, "model": model}
 
 
 @app.get("/datasets/{name:path}/images")

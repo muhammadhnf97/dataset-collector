@@ -1405,15 +1405,13 @@ function App() {
     if (!name) return
     setCreatingDataset(true)
     setCreateDatasetOpen(false)
-    const [model = '', category = ''] = (createDatasetTemplate || '').split('/')
     try {
       const createRes = await fetch('/api/datasets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
-          model: model.trim(),
-          category: category.trim(),
+          template: createDatasetTemplate,
         }),
       })
       const createData = await createRes.json()
@@ -2369,8 +2367,8 @@ function App() {
                       {d.name}
                     </p>
                     <p className="truncate text-[10px] text-slate-200">
-                      {d.model ? `${d.model}` : 'No model'}
-                      {d.model && d.category ? ` / ${d.category}` : ''}
+                      {d.framework ? `${d.framework}` : 'No framework'}
+                      {d.framework && d.model ? ` / ${d.model}` : ''}
                     </p>
                   </div>
                 </div>
@@ -2390,8 +2388,8 @@ function App() {
             ).length
             const currentDataset = datasets.find((d) => d.name === activeDataset)
             const templatePath =
-              currentDataset?.model && currentDataset?.category
-                ? `${currentDataset.model}/${currentDataset.category}`
+              currentDataset?.framework && currentDataset?.model
+                ? `${currentDataset.framework}/${currentDataset.model}`.toLowerCase()
                 : ''
             return (
             <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
@@ -3033,7 +3031,7 @@ function App() {
                   <option value="">No template</option>
                   {Object.entries(
                     templates.reduce((acc, t) => {
-                      const group = t.model || 'Other'
+                      const group = t.framework || 'Other'
                       if (!acc[group]) acc[group] = []
                       acc[group].push(t)
                       return acc
