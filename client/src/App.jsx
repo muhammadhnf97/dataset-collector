@@ -3484,6 +3484,9 @@ function App() {
                 <div className="grid max-h-96 grid-cols-4 gap-3 overflow-y-auto p-1">
                   {availableBatches.map((batch) => {
                     const selected = selectedImportBatches.has(batch.name)
+                    const imported = datasetBatches.includes(
+                      batch.name.replace(/\//g, '_'),
+                    )
                     return (
                       <button
                         key={batch.name}
@@ -3522,6 +3525,11 @@ function App() {
                             {batch.name}
                           </p>
                         </div>
+                        {imported && (
+                          <div className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-sm font-bold text-white shadow">
+                            ✓
+                          </div>
+                        )}
                         <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 text-left">
                           <p className="truncate text-[10px] font-medium text-white">
                             {batch.name}
