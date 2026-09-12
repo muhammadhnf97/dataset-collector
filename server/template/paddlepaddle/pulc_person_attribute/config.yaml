@@ -1,6 +1,6 @@
 model-name: "paddlepaddle"
 model-category: "pulc_person_attribute"
-
+model-annotation: "text"
 attributes:
   - name: Hat
     type: multi
@@ -43,4 +43,4 @@ attributes:
     indices: [23, 24, 25]
     options: [Front, Side, Back]
 
-text-format: "filename.jpg	0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,1"
+text-format: "path/filename.jpg	0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,1"

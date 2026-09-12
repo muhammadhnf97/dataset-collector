@@ -727,10 +727,28 @@ def delete_batch(name: str):
 
 
 def _dataset_summary(name: str, entry: dict):
+    batches = []
+    previews = []
+    dir_name = entry.get("dir")
+    if dir_name:
+        dataset_dir = DATASETS_DIR / dir_name
+        if dataset_dir.is_dir():
+            for txt in sorted(dataset_dir.glob("*.txt")):
+                batches.append(txt.stem)
+                if not previews:
+                    for line in txt.read_text().splitlines():
+                        if not line.strip():
+                            continue
+                        path = line.split("\t")[0].strip()
+                        if path:
+                            previews.append(f"/uploads/{path}")
+                            break
     return {
         "name": name,
         "model": entry.get("model") or "",
         "category": entry.get("category") or "",
+        "batches": batches,
+        "previews": previews,
     }
 
 
@@ -826,6 +844,74 @@ def delete_dataset(name: str):
     return {"deleted": name}
 
 
+@app.post("/datasets/{name:path}/import")
+def import_dataset_batch(name: str, payload: dict):
+    name = unquote(name)
+    batches = payload.get("batches") or []
+    if not batches:
+        single = (payload.get("batch") or "").strip()
+        if single:
+            batches = [single]
+    if not batches:
+        raise HTTPException(status_code=400, detail="Batches required")
+    datasets = load_datasets()
+    if name not in datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    entry = datasets[name]
+    dataset_dir_name = entry.get("dir")
+    if not dataset_dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    model = (entry.get("model") or "").strip()
+    category = (entry.get("category") or "").strip()
+    if not model or not category:
+        raise HTTPException(status_code=400, detail="Dataset model/category not set")
+    config = load_template_config(f"{model}/{category}")
+    attributes = config.get("attributes", [])
+    if not attributes:
+        raise HTTPException(status_code=400, detail="Template has no attributes")
+    all_indices = [idx for attr in attributes for idx in attr.get("indices", [])]
+    if not all_indices:
+        raise HTTPException(status_code=400, detail="Template has no indices")
+    vector_length = max(all_indices) + 1
+    zeros = ",".join(["0"] * vector_length)
+    dataset_dir = DATASETS_DIR / dataset_dir_name
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    results = []
+    for batch in batches:
+        batch = (batch or "").strip()
+        if not batch:
+            continue
+        batch_dir = (UPLOADS_DIR / batch).resolve()
+        if (
+            not batch_dir.is_dir()
+            or not batch_dir.is_relative_to(UPLOADS_DIR.resolve())
+        ):
+            continue
+        images = [
+            f
+            for f in batch_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in _image_extensions()
+        ]
+        images.sort()
+        txt_name = batch.replace("/", "_").replace("\\", "_") + ".txt"
+        txt_path = dataset_dir / txt_name
+        lines = []
+        for img in images:
+            rel = img.relative_to(UPLOADS_DIR)
+            lines.append(f"{rel.as_posix()}\t{zeros}")
+        txt_path.write_text("\n".join(lines))
+        results.append({
+            "file": f"/datasets/{dataset_dir_name}/{txt_name}",
+            "count": len(images),
+        })
+    if not results:
+        raise HTTPException(status_code=404, detail="No valid batches found")
+    return {
+        "files": [r["file"] for r in results],
+        "count": sum(r["count"] for r in results),
+    }
+
+
 @app.post("/datasets/{name}/template")
 def set_dataset_template(name: str, payload: dict):
     template_name = (payload.get("template") or "").strip()
@@ -842,36 +928,51 @@ def set_dataset_template(name: str, payload: dict):
     return {"dataset": name, "template": template_name}
 
 
-@app.get("/datasets/{name}/images")
+@app.get("/datasets/{name:path}/images")
 def get_dataset_images(name: str):
+    name = unquote(name)
     datasets = load_datasets()
     if name not in datasets:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    entry = datasets[name]
+    dir_name = entry.get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset_dir = DATASETS_DIR / dir_name
+    groups = {}
     images = []
-    for batch in datasets[name].get("batches", []):
-        batch_dir = (UPLOADS_DIR / batch).resolve()
-        if not batch_dir.is_dir() or not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
-            continue
-        for f in sorted(batch_dir.iterdir()):
-            if f.is_file() and f.suffix.lower() in _image_extensions(path=f):
-                rel = f.relative_to(UPLOADS_DIR)
-                images.append(f"/uploads/{rel}")
-    return {"dataset": name, "images": images}
+    seen = set()
+    if dataset_dir.is_dir():
+        for txt in sorted(dataset_dir.glob("*.txt")):
+            group = []
+            for line in txt.read_text().splitlines():
+                if not line.strip():
+                    continue
+                path = line.split("\t")[0].strip()
+                if not path or path in seen:
+                    continue
+                seen.add(path)
+                url = f"/uploads/{path}"
+                group.append(url)
+                images.append(url)
+            if group:
+                groups[txt.stem] = group
+    return {"dataset": name, "images": images, "groups": groups}
 
 
-def annotations_file(name: str):
-    return DATASETS_DIR / name / "annotations.json"
+def annotations_file(dir_name: str):
+    return DATASETS_DIR / dir_name / "annotations.json"
 
 
-def load_annotations(name: str):
-    path = annotations_file(name)
+def load_annotations(dir_name: str):
+    path = annotations_file(dir_name)
     if not path.exists():
         return {}
     return json.loads(path.read_text())
 
 
-def save_annotations(name: str, data: dict):
-    atomic_write_json(annotations_file(name), data)
+def save_annotations(dir_name: str, data: dict):
+    atomic_write_json(annotations_file(dir_name), data)
 
 
 @app.get("/datasets/{name}/annotations")
@@ -879,7 +980,10 @@ def get_dataset_annotations(name: str):
     datasets = load_datasets()
     if name not in datasets:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    return {"dataset": name, "annotations": load_annotations(name)}
+    dir_name = datasets[name].get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return {"dataset": name, "annotations": load_annotations(dir_name)}
 
 
 @app.post("/datasets/{name}/annotations")
@@ -893,12 +997,15 @@ def set_dataset_annotation(name: str, payload: dict):
     datasets = load_datasets()
     if name not in datasets:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    dir_name = datasets[name].get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
     # Serialize read-modify-write per dataset so two people annotating
-    # different images at the same time don't clobber each other's save.
-    with annotation_lock(name):
-        annotations = load_annotations(name)
+    # different images at the same time don't clobber each other other's save.
+    with annotation_lock(dir_name):
+        annotations = load_annotations(dir_name)
         annotations[image] = values
-        save_annotations(name, annotations)
+        save_annotations(dir_name, annotations)
     return {"dataset": name, "image": image, "values": values}
 
 
@@ -1076,6 +1183,28 @@ def list_batches():
             for batch_dir in _batch_directories()
         )
     }
+
+
+@app.get("/batches/covers")
+def list_batch_covers():
+    covers = []
+    for batch_dir in _batch_directories():
+        name = str(batch_dir.relative_to(UPLOADS_DIR))
+        images = [
+            f
+            for f in batch_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in _image_extensions()
+        ]
+        images.sort()
+        cover = batch_first_image(name)
+        covers.append(
+            {
+                "name": name,
+                "cover": cover,
+                "count": len(images),
+            }
+        )
+    return {"batches": covers}
 
 
 @app.get("/images")

@@ -19,6 +19,25 @@ function UploadIcon({ className }) {
   )
 }
 
+function PlusIcon({ className }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 4.5v15m7.5-7.5h-15"
+      />
+    </svg>
+  )
+}
+
 function VideoThumb({
   video,
   selected,
@@ -450,6 +469,7 @@ function App() {
   }, [videoImageGroups])
 
   const [modalIndex, setModalIndex] = useState(null)
+  const [datasetModalIndex, setDatasetModalIndex] = useState(null)
   const [imagePage, setImagePage] = useState(0)
 
   const [removeMode, setRemoveMode] = useState(false)
@@ -465,6 +485,7 @@ function App() {
   const [activeDataset, setActiveDataset] = useState('')
   const [datasetBatches, setDatasetBatches] = useState([])
   const [datasetImages, setDatasetImages] = useState([])
+  const [datasetImageGroups, setDatasetImageGroups] = useState({})
   const [datasetAnnotations, setDatasetAnnotations] = useState({})
   const [datasetBatchFilter, setDatasetBatchFilter] = useState(null)
   const [showExportPanel, setShowExportPanel] = useState(false)
@@ -482,6 +503,10 @@ function App() {
   const [creatingDataset, setCreatingDataset] = useState(false)
   const [assignToDatasetOpen, setAssignToDatasetOpen] = useState(false)
   const [assignToDatasetBatch, setAssignToDatasetBatch] = useState('')
+  const [importBatchOpen, setImportBatchOpen] = useState(false)
+  const [availableBatches, setAvailableBatches] = useState([])
+  const [selectedImportBatches, setSelectedImportBatches] = useState(new Set())
+  const [importingBatch, setImportingBatch] = useState(false)
   const [selectedDataset, setSelectedDataset] = useState('')
   const [templates, setTemplates] = useState([])
   const [annotate, setAnnotate] = useState(null)
@@ -536,6 +561,14 @@ function App() {
       i === null
         ? null
         : (i + delta + videoImages.length) % videoImages.length,
+    )
+  }
+
+  const navigateDatasetModal = (delta) => {
+    setDatasetModalIndex((i) =>
+      i === null
+        ? null
+        : (i + delta + datasetImages.length) % datasetImages.length,
     )
   }
 
@@ -880,6 +913,7 @@ function App() {
         setDatasetBatches(data.batches ?? [])
         setDatasetSplit(data.split ?? { train: 70, val: 20, test: 10 })
         setDatasetImages(imagesData.images ?? [])
+        setDatasetImageGroups(imagesData.groups ?? {})
         setDatasetAnnotations(annotData.annotations ?? {})
       } else {
         setStatus(`Failed: ${data.detail ?? imagesData.detail ?? 'Unknown error'}`)
@@ -1398,6 +1432,48 @@ function App() {
     }
   }
 
+  const openImportBatch = async () => {
+    setImportBatchOpen(true)
+    setSelectedImportBatches(new Set())
+    try {
+      const response = await fetch('/api/batches/covers')
+      const data = await response.json()
+      setAvailableBatches(data.batches ?? [])
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const doImportBatch = async () => {
+    if (selectedImportBatches.size === 0) return
+    setImportingBatch(true)
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/import`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            batches: Array.from(selectedImportBatches),
+          }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setStatus(`Imported ${data.count} images into ${data.files.length} .txt files`)
+      setImportBatchOpen(false)
+      setSelectedImportBatches(new Set())
+      fetchDatasets()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setImportingBatch(false)
+    }
+  }
+
   const doDeleteBatch = async () => {
     if (!selectedBatch) return
     setStatus(`Deleting batch ${selectedBatch}...`)
@@ -1582,7 +1658,7 @@ function App() {
               onClick={() => setActivePage('datasets')}
               className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                 activePage === 'datasets'
-                  ? 'bg-emerald-500 text-white shadow'
+                  ? 'bg-indigo-500 text-white shadow'
                   : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
               }`}
             >
@@ -1592,7 +1668,7 @@ function App() {
         </header>
 
         {activePage === 'raw_video' && (
-          <section className="relative z-20 mt-8 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+          <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-slate-800">Videos</h2>
             <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
@@ -1890,7 +1966,7 @@ function App() {
         )}
 
         {activePage === 'raw_image' && (
-        <section className="mt-6 rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+        <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-slate-800">Raw Images</h2>
             <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
@@ -1907,7 +1983,7 @@ function App() {
               type="button"
               disabled={removeRawMode}
               onClick={() => tarInputRef.current?.click()}
-              className="ml-auto flex items-center gap-2 rounded-full bg-slate-800 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="ml-auto flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ArchiveIcon className="h-4 w-4" />
               Upload Image
@@ -2174,7 +2250,7 @@ function App() {
         )}
 
         {activePage === 'datasets' && (
-          <section className="mt-8 rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+          <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
             <div className="flex items-baseline gap-3">
               <h2 className="text-lg font-semibold text-slate-800">Datasets</h2>
               <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
@@ -2190,8 +2266,9 @@ function App() {
                       setCreateDatasetName('')
                       setCreateDatasetTemplate('')
                     }}
-                    className="flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
+                    className="flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
                   >
+                    {!creatingDataset && <PlusIcon className="h-4 w-4" />}
                     {creatingDataset ? 'Creating...' : 'New dataset'}
                   </button>
                 )}
@@ -2255,50 +2332,46 @@ function App() {
                       openDataset(d.name)
                     }
                   }}
-                  className={`relative w-full cursor-pointer overflow-hidden rounded-2xl border transition ${
-                    activeDataset === d.name
-                      ? 'border-emerald-400 bg-emerald-50/40'
-                      : 'border-slate-200 bg-white hover:border-emerald-300'
+                  className={`group relative aspect-video w-full cursor-pointer overflow-hidden rounded-lg shadow-sm transition hover:shadow-md ${
+                    activeDataset === d.name && !removeDatasetMode
+                      ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-white'
+                      : ''
                   } ${
                     selectedDatasetsToRemove.has(d.name)
                       ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-white'
                       : ''
                   }`}
                 >
+                  {d.previews && d.previews.length > 0 ? (
+                    <img
+                      src={`/api${d.previews[0]}`}
+                      alt=""
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-xs text-slate-400">
+                      No images
+                    </div>
+                  )}
                   {removeDatasetMode && (
                     <div
-                      className={`absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 ${
+                      className={`absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white text-sm font-bold shadow ${
                         selectedDatasetsToRemove.has(d.name)
-                          ? 'border-red-500 bg-red-500 text-white'
-                          : 'border-white bg-white/50 text-transparent'
+                          ? 'bg-red-500 text-white'
+                          : 'bg-white/50 text-transparent'
                       }`}
                     >
                       ✓
                     </div>
                   )}
-                  <div className="flex flex-col">
-                    <div className="relative w-full shrink-0 overflow-hidden rounded-t-lg bg-slate-100" style={{ aspectRatio: '16 / 9' }}>
-                      {d.previews && d.previews.length > 0 ? (
-                        <img
-                          src={`/api${d.previews[0]}`}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
-                          No images
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0 p-3 pt-2">
-                      <h3 className="truncate text-base font-semibold text-slate-800">
-                        {d.name}
-                      </h3>
-                      <p className="text-sm text-slate-500">
-                        {d.model ? `${d.model}` : 'No model'}
-                        {d.model && d.category ? ` / ${d.category}` : ''}
-                      </p>
-                    </div>
+                  <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 text-left">
+                    <p className="truncate text-xs font-medium text-white">
+                      {d.name}
+                    </p>
+                    <p className="truncate text-[10px] text-slate-200">
+                      {d.model ? `${d.model}` : 'No model'}
+                      {d.model && d.category ? ` / ${d.category}` : ''}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -2307,15 +2380,21 @@ function App() {
 
           {activeDataset && (() => {
             const filteredImages = datasetBatchFilter
-              ? datasetImages.filter((src) =>
-                  src.includes(`/imports/${datasetBatchFilter}/`),
-                )
+              ? (datasetImageGroups[datasetBatchFilter] ?? [])
               : datasetImages
+            const groups = datasetBatchFilter
+              ? { [datasetBatchFilter]: filteredImages }
+              : datasetImageGroups
             const annotatedCount = filteredImages.filter(
               (src) => datasetAnnotations[src] !== undefined,
             ).length
+            const currentDataset = datasets.find((d) => d.name === activeDataset)
+            const templatePath =
+              currentDataset?.model && currentDataset?.category
+                ? `${currentDataset.model}/${currentDataset.category}`
+                : ''
             return (
-            <section className="mt-6 rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+            <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
               <div className="flex items-center gap-3">
                 <h2 className="text-lg font-semibold text-slate-800">
                   {activeDataset}
@@ -2323,7 +2402,52 @@ function App() {
                 <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
                   {annotatedCount} / {filteredImages.length} annotated
                 </span>
+                {datasetBatches.length > 0 && (
+                  <select
+                    value={datasetBatchFilter ?? ''}
+                    onChange={(e) =>
+                      setDatasetBatchFilter(
+                        e.target.value === '' ? null : e.target.value,
+                      )
+                    }
+                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none"
+                  >
+                    <option value="">All batches</option>
+                    {datasetBatches.map((batch) => (
+                      <option key={batch} value={batch}>
+                        {batch}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <div className="ml-auto flex items-center gap-2">
+                  <select
+                    value=""
+                    disabled={!templatePath}
+                    onChange={(e) => {
+                      const mode = e.target.value
+                      e.target.value = ''
+                      if (mode === 'text') {
+                        openAnnotate(activeDataset, templatePath)
+                      }
+                    }}
+                    className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 outline-none disabled:opacity-40"
+                  >
+                    <option value="" disabled>
+                      Annotate
+                    </option>
+                    <option value="draw" disabled>
+                      Draw
+                    </option>
+                    <option value="text">Text</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={openImportBatch}
+                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
+                  >
+                    Import batch
+                  </button>
                   <button
                     type="button"
                     onClick={() => setActiveDataset('')}
@@ -2333,36 +2457,6 @@ function App() {
                   </button>
                 </div>
               </div>
-
-              {datasetBatches.length > 1 && (
-                <div className="mt-3 flex flex-wrap gap-1 rounded-full bg-slate-200/70 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setDatasetBatchFilter(null)}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                      datasetBatchFilter === null
-                        ? 'bg-white text-slate-800 shadow'
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    All batches
-                  </button>
-                  {datasetBatches.map((batch) => (
-                    <button
-                      key={batch}
-                      type="button"
-                      onClick={() => setDatasetBatchFilter(batch)}
-                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                        datasetBatchFilter === batch
-                          ? 'bg-white text-slate-800 shadow'
-                          : 'text-slate-500 hover:text-slate-700'
-                      }`}
-                    >
-                      {batch}
-                    </button>
-                  ))}
-                </div>
-              )}
 
               {showExportPanel && (
                 <div className="relative mt-4 flex flex-col items-stretch gap-2.5 rounded-xl border border-white/10 bg-slate-900 p-3.5 shadow-2xl">
@@ -2433,22 +2527,46 @@ function App() {
                 </div>
               )}
 
-              {filteredImages.length === 0 ? (
+              {Object.keys(groups).length === 0 ? (
                 <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
                   No images in this dataset
                 </div>
               ) : (
-                <div className="mt-4 grid grid-cols-6 gap-3">
-                  {filteredImages.map((src) => (
-                    <div key={src} className="relative block">
-                      <img
-                        src={`/api${src}`}
-                        alt=""
-                        className="aspect-video w-full rounded-lg object-cover shadow"
-                      />
+                Object.entries(groups).map(([batch, images]) => (
+                  <div key={batch} className="mt-4">
+                    <h3 className="mb-2 text-sm font-semibold text-slate-700">
+                      {batch}
+                    </h3>
+                    <div className="grid grid-cols-6 gap-3">
+                      {images.map((src) => {
+                        const isAnnotated = datasetAnnotations[src] !== undefined
+                        return (
+                          <button
+                            key={src}
+                            type="button"
+                            onClick={() =>
+                              setDatasetModalIndex(datasetImages.indexOf(src))
+                            }
+                            className={`relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
+                              isAnnotated ? 'ring-2 ring-emerald-500' : ''
+                            }`}
+                          >
+                            <img
+                              src={`/api${src}`}
+                              alt=""
+                              className="aspect-video w-full object-cover"
+                            />
+                            {isAnnotated && (
+                              <span className="absolute right-1 top-1 flex h-5 items-center gap-1 rounded-full bg-emerald-500 px-2 text-[10px] font-bold text-white shadow">
+                                ✓ Annotated
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))
               )}
             </section>
             )
@@ -2475,6 +2593,14 @@ function App() {
           setRemoveVideoImageUrl(src)
           setConfirmingRemoveVideoImage(true)
         }}
+      />
+
+      <ImageModal
+        images={datasetImages}
+        index={datasetModalIndex}
+        onClose={() => setDatasetModalIndex(null)}
+        onNavigate={navigateDatasetModal}
+        onSelect={setDatasetModalIndex}
       />
 
       {annotate && (
@@ -2563,7 +2689,7 @@ function App() {
             </div>
           </div>
 
-          <div className="w-80 shrink-0 overflow-y-auto border-l border-white/10 bg-slate-900 p-4">
+          <div className="w-[28rem] shrink-0 overflow-y-auto border-l border-white/10 bg-slate-900 p-4">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-white">
                 {annotate.wizardMode ? 'Wizard' : 'Attributes'} ({annotate.template})
@@ -2945,6 +3071,96 @@ function App() {
                 className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
               >
                 {creatingDataset ? 'Creating...' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importBatchOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => {
+            setImportBatchOpen(false)
+            setSelectedImportBatches(new Set())
+          }}
+        >
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-slate-800">Import Batch</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Pick raw-image or video batches to import into {activeDataset}.
+            </p>
+            <div className="mt-4">
+              {availableBatches.length === 0 ? (
+                <p className="text-sm text-slate-500">No batches available.</p>
+              ) : (
+                <div className="grid max-h-96 grid-cols-4 gap-3 overflow-y-auto p-1">
+                  {availableBatches.map((batch) => {
+                    const selected = selectedImportBatches.has(batch.name)
+                    return (
+                      <button
+                        key={batch.name}
+                        type="button"
+                        onClick={() =>
+                          setSelectedImportBatches((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(batch.name)) {
+                              next.delete(batch.name)
+                            } else {
+                              next.add(batch.name)
+                            }
+                            return next
+                          })
+                        }
+                        className={`group relative aspect-video w-full overflow-hidden rounded-lg border text-left shadow-sm transition hover:shadow-md ${
+                          selected
+                            ? 'border-indigo-500 ring-2 ring-indigo-500'
+                            : 'border-slate-200'
+                        }`}
+                      >
+                        {batch.cover ? (
+                          <img
+                            src={`/api${batch.cover}`}
+                            alt=""
+                            className="absolute inset-0 h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-slate-100 text-xs text-slate-400">
+                            No image
+                          </div>
+                        )}
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 text-left">
+                          <p className="truncate text-[10px] font-medium text-white">
+                            {batch.name}
+                          </p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setImportBatchOpen(false)
+                  setSelectedImportBatches(new Set())
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doImportBatch}
+                disabled={selectedImportBatches.size === 0 || importingBatch}
+                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
+              >
+                {importingBatch ? 'Importing...' : 'Import'}
               </button>
             </div>
           </div>
