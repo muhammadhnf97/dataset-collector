@@ -3,3 +3,4 @@ uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 ultralytics>=8.3
 pyyaml>=6.0
+sqlalchemy>=2.0

@@ -1967,6 +1967,17 @@ function App() {
                     </button>
                     <button
                       type="button"
+                      onClick={() =>
+                        selectedVideosToRemove.size === videos.length
+                          ? setSelectedVideosToRemove(new Set())
+                          : setSelectedVideosToRemove(new Set(videos.map((v) => v.filename)))
+                      }
+                      className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                      {selectedVideosToRemove.size === videos.length ? 'Deselect all' : 'Select all'}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => {
                         setRemoveVideoMode(false)
                         setSelectedVideosToRemove(new Set())
@@ -2261,6 +2272,17 @@ function App() {
                   >
                     Delete {selectedRawsToRemove.size} raw image
                     {selectedRawsToRemove.size === 1 ? '' : 's'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      selectedRawsToRemove.size === rawSources.length
+                        ? setSelectedRawsToRemove(new Set())
+                        : setSelectedRawsToRemove(new Set(rawSources.map((r) => r.batch)))
+                    }
+                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                  >
+                    {selectedRawsToRemove.size === rawSources.length ? 'Deselect all' : 'Select all'}
                   </button>
                   <button
                     type="button"
