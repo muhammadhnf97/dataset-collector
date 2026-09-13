@@ -122,17 +122,6 @@ def _image_extensions(path: Path | None = None):
     )
 
 
-def batch_first_image(batch: str):
-    batch_dir = (UPLOADS_DIR / batch).resolve()
-    if not batch_dir.is_dir() or not batch_dir.is_relative_to(UPLOADS_DIR):
-        return None
-    for f in sorted(batch_dir.iterdir()):
-        if f.is_file() and f.suffix.lower() in _image_extensions(path=f):
-            rel = f.relative_to(UPLOADS_DIR)
-            return f"/uploads/{rel}"
-    return None
-
-
 DEFAULT_SPLIT = {"train": 70, "val": 20, "test": 10}
 
 
@@ -1617,19 +1606,11 @@ def download_dataset(name: str, format: str = "tar"):
     return FileResponse(archive_path, filename=f"{name}.{ext}", media_type=media_type)
 
 
-def _batch_directories():
-    if RAW_IMAGES_DIR.is_dir():
-        for source_dir in sorted(RAW_IMAGES_DIR.iterdir()):
-            if source_dir.is_dir() and any(source_dir.iterdir()):
-                yield source_dir
-
-
 @app.get("/batches")
 def list_batches():
     db = SessionLocal()
     try:
         items = []
-        db_batch_names = set()
         for batch in db.query(DbBatch).order_by(DbBatch.name).all():
             name = (
                 f"raw-images/{batch.name}"
@@ -1637,24 +1618,6 @@ def list_batches():
                 else batch.name
             )
             items.append({"id": batch.id, "name": name, "cover": batch.cover})
-            db_batch_names.add(batch.name)
-        seen = {i["name"] for i in items}
-        for batch_dir in _batch_directories():
-            name = str(batch_dir.relative_to(UPLOADS_DIR))
-            if name in seen or batch_dir.name in db_batch_names:
-                continue
-            images = [
-                f
-                for f in batch_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in _image_extensions()
-            ]
-            images.sort()
-            cover = (
-                f"/uploads/{batch_dir.relative_to(UPLOADS_DIR)}/{images[0].name}"
-                if images
-                else None
-            )
-            items.append({"name": name, "cover": cover})
         items.sort(key=lambda x: x["name"])
         model = get_model()
         classes = sorted(set(model.names.values()))
@@ -1667,18 +1630,13 @@ def list_batches():
 def list_batch_covers():
     db = SessionLocal()
     try:
-        seen = set()
-        db_batch_names = set()
         covers = []
-
         for batch in db.query(DbBatch).order_by(DbBatch.name).all():
             name = (
                 f"raw-images/{batch.name}"
                 if batch.type == "raw"
                 else batch.name
             )
-            seen.add(name)
-            db_batch_names.add(batch.name)
             covers.append(
                 {
                     "id": batch.id,
@@ -1687,28 +1645,6 @@ def list_batch_covers():
                     "count": len(batch.images),
                 }
             )
-
-        for batch_dir in _batch_directories():
-            name = str(batch_dir.relative_to(UPLOADS_DIR))
-            if name in seen or batch_dir.name in db_batch_names:
-                continue
-            seen.add(name)
-            images = [
-                f
-                for f in batch_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in _image_extensions()
-            ]
-            images.sort()
-            cover = batch_first_image(name)
-            covers.append(
-                {
-                    "id": None,
-                    "name": name,
-                    "cover": cover,
-                    "count": len(images),
-                }
-            )
-
         return {"batches": covers}
     finally:
         db.close()
@@ -1721,15 +1657,6 @@ def list_images(batch: str | None = None, id: int | None = None):
             return "imported"
         if batch_type in ("frames", "crops"):
             return batch_type
-        return "frames"
-
-    def _category_from_path(batch_dir: Path) -> str:
-        if batch_dir.name.endswith("-crops"):
-            return "crops"
-        if batch_dir.name.endswith("-frames"):
-            return "frames"
-        if batch_dir.resolve().is_relative_to(RAW_IMAGES_DIR.resolve()):
-            return "imported"
         return "frames"
 
     result = {"imported": [], "frames": [], "crops": []}
@@ -1753,39 +1680,11 @@ def list_images(batch: str | None = None, id: int | None = None):
                 .order_by(DbImage.path)
                 .all()
             )
-            if image_rows:
-                return {"images": [row.path for row in image_rows]}
-
-            batch_dir = (RAW_IMAGES_DIR / batch_name).resolve()
-            if not batch_dir.is_dir() or not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
-                return {"images": []}
-            return {
-                "images": [
-                    f"/uploads/{batch_dir.relative_to(UPLOADS_DIR)}/{image.name}"
-                    for image in sorted(batch_dir.iterdir())
-                    if image.is_file()
-                ]
-            }
-
-        db_batch_paths = set()
-        for b in db.query(DbBatch).all():
-            path = f"raw-images/{b.name}" if b.type == "raw" else b.name
-            db_batch_paths.add(path)
+            return {"images": [row.path for row in image_rows]}
 
         for row in db.query(DbImage).join(DbBatch).order_by(DbImage.path).all():
             key = _key_for_type(row.batch.type)
             result[key].append(row.path)
-
-        for batch_dir in _batch_directories():
-            name = str(batch_dir.relative_to(UPLOADS_DIR))
-            if name in db_batch_paths:
-                continue
-            key = _category_from_path(batch_dir)
-            for image in sorted(batch_dir.iterdir()):
-                if image.is_file():
-                    result[key].append(
-                        f"/uploads/{batch_dir.relative_to(UPLOADS_DIR)}/{image.name}"
-                    )
 
         return result
     finally:
