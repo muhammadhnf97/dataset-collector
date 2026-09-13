@@ -38,55 +38,6 @@ function PlusIcon({ className }) {
   )
 }
 
-function VideoThumb({
-  video,
-  selected,
-  removeMode,
-  marked,
-  onSelect,
-  onToggleRemove,
-}) {
-  return (
-    <div className="flex w-40 shrink-0 flex-col">
-      <div className="relative">
-        <button
-          type="button"
-          onClick={removeMode ? onToggleRemove : onSelect}
-          className={`group relative w-full overflow-hidden rounded-xl shadow transition hover:shadow-lg ${
-            selected
-              ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-white'
-              : ''
-          } ${marked ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-white' : ''}`}
-        >
-          {video.thumbnail_url ? (
-            <img
-              src={`/api${video.thumbnail_url}`}
-              alt=""
-              className="aspect-video w-full object-cover transition duration-150 group-hover:scale-105"
-            />
-          ) : (
-            <div className="flex aspect-video w-full items-center justify-center bg-slate-200 text-xs text-slate-500">
-              No thumbnail
-            </div>
-          )}
-          {removeMode ? (
-            <div className={`absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full border-2 ${marked ? 'border-red-500 bg-red-500 text-white' : 'border-white bg-white/50 text-transparent'}`}>
-              ✓
-            </div>
-          ) : video.batch_count > 0 ? (
-            <div
-              title={`${video.batch_count} batch${video.batch_count === 1 ? '' : 'es'}`}
-              className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-sm font-bold text-white shadow"
-            >
-              ✓
-            </div>
-          ) : null}
-        </button>
-      </div>
-    </div>
-  )
-}
-
 function ArrowIcon({ className, direction }) {
   return (
     <svg
@@ -126,16 +77,16 @@ function Filmstrip({ images, index, marked, onSelect }) {
     >
       {images.map((image, i) => (
         <img
-          key={image}
+          key={image.id ?? image}
           data-active={i === index}
-          src={`/api${image}`}
+          src={`/api${image.path ?? image}`}
           alt=""
           onClick={(e) => {
             e.stopPropagation()
             onSelect(i)
           }}
           className={`h-16 w-28 shrink-0 cursor-pointer rounded-md object-cover shadow-md transition duration-150 ${
-            marked?.has(image)
+            marked?.has(image.id ?? image)
               ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-slate-100'
               : i === index
                 ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-slate-100'
@@ -154,7 +105,8 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
       if (e.key === 'ArrowLeft') onNavigate(-1)
       if (e.key === 'ArrowRight') onNavigate(1)
       if (onRemove && (e.key === 'x' || e.key === 'X')) {
-        onRemove(images[index])
+        const current = images[index]
+        onRemove(current.path ?? current)
       }
     }
     window.addEventListener('keydown', handleKey)
@@ -179,7 +131,8 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
           type="button"
           onClick={(e) => {
             e.stopPropagation()
-            onRemove(images[index])
+            const current = images[index]
+            onRemove(current.path ?? current)
           }}
           className="absolute left-4 top-24 z-10 flex h-10 items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-red-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-red-500"
         >
@@ -206,11 +159,13 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
         <ArrowIcon direction="left" className="h-6 w-6" />
       </button>
 
-      <img
-        src={`/api${images[index]}`}
-        alt=""
-        className="h-full w-full object-contain p-4"
-      />
+      <div className="flex flex-1 items-center justify-center overflow-hidden pt-24 pb-12">
+        <img
+          src={`/api${images[index].path ?? images[index]}`}
+          alt=""
+          className="h-full w-full object-contain p-4"
+        />
+      </div>
 
       <button
         type="button"
@@ -247,8 +202,9 @@ function RemoveModeModal({
       if (e.key === 'ArrowRight') onNavigate(1)
       if (e.key === ' ') {
         e.preventDefault()
-        if (images[index]) {
-          onToggleMark(images[index])
+        const current = images[index]
+        if (current) {
+          onToggleMark(current.id ?? current)
           onNavigate(1)
         }
       }
@@ -258,7 +214,7 @@ function RemoveModeModal({
   }, [onNavigate, onToggleMark, images, index])
 
   const current = images[index]
-  const isMarked = current ? marked.has(current) : false
+  const isMarked = current ? marked.has(current.id ?? current) : false
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm">
@@ -301,11 +257,11 @@ function RemoveModeModal({
       </button>
 
       {current && (
-        <div className="relative">
+        <div className="relative flex h-full w-full items-center justify-center overflow-hidden pt-24 pb-12">
           <img
-            src={`/api${current}`}
+            src={`/api${current.path ?? current}`}
             alt=""
-            className={`h-[72vh] w-[85vw] rounded-lg object-contain shadow-2xl transition ${
+            className={`h-full w-full rounded-lg object-contain shadow-2xl transition ${
               isMarked ? 'ring-4 ring-red-500' : ''
             }`}
           />
@@ -332,7 +288,7 @@ function RemoveModeModal({
         {current && (
           <button
             type="button"
-            onClick={() => onToggleMark(current)}
+            onClick={() => onToggleMark(current.id ?? current)}
             className={`rounded-full px-5 py-2 text-sm font-medium text-white shadow-lg transition ${
               isMarked
                 ? 'border border-white/10 bg-white/10 backdrop-blur-md hover:bg-white/20'
@@ -447,6 +403,7 @@ function App() {
   const [frameImages, setFrameImages] = useState([])
   const [cropImages, setCropImages] = useState([])
   const [selectedRaw, setSelectedRaw] = useState(null)
+  const [selectedBatchId, setSelectedBatchId] = useState(null)
   const [selectedRawImages, setSelectedRawImages] = useState([])
   const [yoloClasses, setYoloClasses] = useState([])
   const [batches, setBatches] = useState([])
@@ -478,24 +435,6 @@ function App() {
   const [confirmingRemoveDatasets, setConfirmingRemoveDatasets] = useState(false)
   const [selectedVideoBatch, setSelectedVideoBatch] = useState(null)
 
-  const videoImageGroups = useMemo(() => {
-    const groups = {}
-    for (const src of videoImages) {
-      const match = src.match(/\/imgs\/([^/]+)\//)
-      const batch = match ? match[1] : 'unknown'
-      if (!groups[batch]) groups[batch] = []
-      groups[batch].push(src)
-    }
-    return groups
-  }, [videoImages])
-
-  useEffect(() => {
-    const batches = Object.keys(videoImageGroups).sort()
-    setSelectedVideoBatch((current) =>
-      current && videoImageGroups[current] ? current : batches[0] ?? null,
-    )
-  }, [videoImageGroups])
-
   const [modalIndex, setModalIndex] = useState(null)
   const [datasetModalIndex, setDatasetModalIndex] = useState(null)
   const [imagePage, setImagePage] = useState(0)
@@ -512,7 +451,7 @@ function App() {
   const [deleteBatchConfirmOpen, setDeleteBatchConfirmOpen] = useState(false)
   const [assignOpen, setAssignOpen] = useState(false)
   const [datasets, setDatasets] = useState([])
-  const [activePage, setActivePage] = useState('raw_video')
+  const [activePage, setActivePage] = useState('raw_image')
   const [activeDataset, setActiveDataset] = useState('')
   const [datasetBatches, setDatasetBatches] = useState([])
   const [datasetImages, setDatasetImages] = useState([])
@@ -520,6 +459,11 @@ function App() {
   const [datasetAnnotations, setDatasetAnnotations] = useState({})
   const [datasetBatchFilter, setDatasetBatchFilter] = useState(null)
   const [showExportPanel, setShowExportPanel] = useState(false)
+  const [datasetSettingsOpen, setDatasetSettingsOpen] = useState(false)
+  const [datasetNameEdit, setDatasetNameEdit] = useState('')
+  const [datasetFrameworkEdit, setDatasetFrameworkEdit] = useState('')
+  const [datasetModelEdit, setDatasetModelEdit] = useState('')
+  const [savingDatasetSettings, setSavingDatasetSettings] = useState(false)
   const [datasetSplit, setDatasetSplit] = useState({
     train: 70,
     val: 20,
@@ -565,16 +509,19 @@ function App() {
   const activeImages = selectedRawImages
 
   const rawSources = useMemo(() => {
-    const map = {}
-    for (const url of importedImages) {
-      const match = url.match(/\/uploads\/raw-images\/([^/]+)\//)
-      if (!match) continue
-      const source = match[1]
-      if (!map[source]) map[source] = { source, batch: `raw-images/${source}`, previews: [] }
-      if (map[source].previews.length < 1) map[source].previews.push(url)
-    }
-    return Object.values(map).sort((a, b) => a.source.localeCompare(b.source))
-  }, [importedImages])
+    return (batches ?? [])
+      .map((b) => (typeof b === 'string' ? { name: b } : b))
+      .map((b) => {
+        const source = b.name.split('/').pop()
+        return {
+          id: b.id,
+          source,
+          batch: b.name,
+          previews: b.cover ? [b.cover] : [],
+        }
+      })
+      .sort((a, b) => a.source.localeCompare(b.source))
+  }, [batches])
 
   const IMAGES_PER_PAGE = 50
   const pageCount = Math.max(
@@ -610,63 +557,6 @@ function App() {
     )
   }
 
-  const fetchVideos = async () => {
-    try {
-      const response = await fetch('/api/videos')
-      const data = await response.json()
-      setVideos(data.videos ?? [])
-    } catch {
-      setStatus('Failed: could not reach the server')
-    }
-  }
-
-  const fetchVideoImages = async (filename) => {
-    try {
-      const response = await fetch(
-        `/api/videos/${encodeURIComponent(filename)}/images`,
-      )
-      const data = await response.json()
-      setVideoImages(data.images ?? [])
-    } catch {
-      setVideoImages([])
-    }
-  }
-
-  const doDeleteSelectedVideos = async () => {
-    if (selectedVideosToRemove.size === 0) return
-    setConfirmingRemoveVideos(false)
-    let deleted = 0
-    let failed = 0
-    for (const filename of selectedVideosToRemove) {
-      try {
-        const response = await fetch(
-          `/api/videos/${encodeURIComponent(filename)}`,
-          { method: 'DELETE' },
-        )
-        if (response.ok) {
-          deleted += 1
-        } else {
-          failed += 1
-        }
-      } catch {
-        failed += 1
-      }
-    }
-    if (deleted > 0) {
-      setSelectedFilename(null)
-      setVideoImages([])
-      fetchVideos()
-      fetchImages()
-    }
-    setSelectedVideosToRemove(new Set())
-    setRemoveVideoMode(false)
-    if (failed === 0) {
-      setStatus(`Deleted ${deleted} video${deleted === 1 ? '' : 's'}`)
-    } else {
-      setStatus(`Deleted ${deleted}, failed ${failed}`)
-    }
-  }
-
   const doDeleteSelectedRaws = async () => {
     if (selectedRawsToRemove.size === 0) return
     setConfirmingRemoveRaws(false)
@@ -689,8 +579,8 @@ function App() {
     }
     if (deleted > 0) {
       setSelectedRaw(null)
+      setSelectedBatchId(null)
       setSelectedRawImages([])
-      fetchImages()
       fetchBatches()
     }
     setSelectedRawsToRemove(new Set())
@@ -699,28 +589,6 @@ function App() {
       setStatus(`Deleted ${deleted} raw image batch${deleted === 1 ? '' : 'es'}`)
     } else {
       setStatus(`Deleted ${deleted}, failed ${failed}`)
-    }
-  }
-
-  const doRemoveVideoBatch = async () => {
-    if (!selectedFilename || !selectedVideoBatch) return
-    setConfirmingRemoveVideoBatch(false)
-    try {
-      const response = await fetch(
-        `/api/videos/${encodeURIComponent(selectedFilename)}/batches/${encodeURIComponent(selectedVideoBatch)}`,
-        { method: 'DELETE' },
-      )
-      if (response.ok) {
-        setVideoModalIndex(null)
-        fetchVideoImages(selectedFilename)
-        fetchImages()
-        setStatus(`Deleted ${selectedVideoBatch}`)
-      } else {
-        const data = await response.json()
-        setStatus(`Failed: ${data.detail ?? 'Could not delete batch'}`)
-      }
-    } catch {
-      setStatus('Failed: could not reach the server')
     }
   }
 
@@ -759,37 +627,6 @@ function App() {
     }
   }
 
-  const doVideoExtract = async () => {
-    if (!selectedFilename || videoExtracting) return
-    setVideoExtracting(true)
-    setStatus('Extracting...')
-    try {
-      const params = new URLSearchParams({
-        frames_per_minute: String(videoFramesPerMinute),
-        margin: String(videoCropMargin),
-        classes: videoSelectedClasses.join(','),
-        mode: videoMode,
-        confidence: String(videoConfidence / 100),
-      })
-      const response = await fetch(
-        `/api/videos/${encodeURIComponent(selectedFilename)}/frames?${params}`,
-        { method: 'POST' },
-      )
-      const data = await response.json()
-      if (response.ok) {
-        setStatus(`Extracted ${videoMode} for ${selectedFilename}`)
-        fetchImages()
-        fetchVideoImages(selectedFilename)
-      } else {
-        setStatus(`Failed: ${data.detail ?? 'Extraction failed'}`)
-      }
-    } catch {
-      setStatus('Failed: could not reach the server')
-    } finally {
-      setVideoExtracting(false)
-    }
-  }
-
   const doGenerateRaw = async () => {
     if (!selectedRaw || rawGenerating) return
     setRawGenerating(true)
@@ -812,8 +649,10 @@ function App() {
       const data = await response.json()
       if (response.ok) {
         setStatus(`Generated ${data.count} images`)
-        fetchImages()
-        fetchRawImages(`raw-images/${selectedRaw}`)
+        fetchBatches()
+        if (selectedBatchId) {
+          fetchRawImages(selectedBatchId)
+        }
       } else {
         setStatus(`Failed: ${data.detail ?? 'Generation failed'}`)
       }
@@ -840,13 +679,13 @@ function App() {
     }
   }
 
-  const fetchRawImages = async (source) => {
+  const fetchRawImages = async (batchId) => {
     try {
       const response = await fetch(
-        `/api/images?batch=${encodeURIComponent(source)}`,
+        `/api/images?id=${encodeURIComponent(batchId)}`,
       )
       const data = await response.json()
-      setSelectedRawImages(data.imported ?? [])
+      setSelectedRawImages(data.images ?? [])
       setImagePage(0)
     } catch {
       setStatus('Failed: could not reach the server')
@@ -858,6 +697,7 @@ function App() {
       const response = await fetch('/api/batches')
       const data = await response.json()
       setBatches(data.batches ?? [])
+      setYoloClasses(data.classes ?? [])
     } catch {
       setStatus('Failed: could not reach the server')
     }
@@ -882,7 +722,6 @@ function App() {
         setSelectedBatch(null)
         setSplitConfirmOpen(false)
         fetchBatches()
-        fetchImages()
       } else {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
       }
@@ -1612,7 +1451,7 @@ function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            batches: Array.from(selectedImportBatches),
+            batch_ids: Array.from(selectedImportBatches),
           }),
         },
       )
@@ -1621,7 +1460,7 @@ function App() {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
         return
       }
-      setStatus(`Imported ${data.count} images into ${data.files.length} .txt files`)
+      setStatus(`Imported ${data.count} images from ${data.batches.length} batches`)
       setImportBatchOpen(false)
       setSelectedImportBatches(new Set())
       fetchDatasets()
@@ -1630,6 +1469,56 @@ function App() {
       setStatus('Failed: could not reach the server')
     } finally {
       setImportingBatch(false)
+    }
+  }
+
+  const openDatasetSettings = () => {
+    const ds = datasets.find((d) => d.name === activeDataset)
+    if (!ds) return
+    setDatasetNameEdit(ds.name)
+    const match = templates.find(
+      (t) => t.framework === ds.framework && t.label === ds.model,
+    )
+    setDatasetModelEdit(match ? match.name : '')
+    setDatasetSettingsOpen(true)
+  }
+
+  const doSaveDatasetSettings = async () => {
+    if (!datasetNameEdit.trim()) {
+      setStatus('Dataset name is required')
+      return
+    }
+    setSavingDatasetSettings(true)
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/settings`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: datasetNameEdit.trim(),
+            template: datasetModelEdit,
+          }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setStatus(`Updated dataset ${data.dataset}`)
+      setDatasetSettingsOpen(false)
+      const newName = data.dataset
+      fetchDatasets().then(() => {
+        if (activeDataset !== newName) {
+          setActiveDataset(newName)
+        }
+        refreshDataset(newName)
+      })
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setSavingDatasetSettings(false)
     }
   }
 
@@ -1683,7 +1572,6 @@ function App() {
         setSelectedBatch(null)
         setDeleteBatchConfirmOpen(false)
         fetchBatches()
-        fetchImages()
       } else {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
       }
@@ -1693,27 +1581,13 @@ function App() {
   }
 
   useEffect(() => {
-    fetchVideos()
-    fetchImages()
     fetchBatches()
-    fetch('/api/classes')
-      .then((r) => r.json())
-      .then((d) => setYoloClasses(d.classes ?? []))
-      .catch(() => {})
   }, [])
 
   useEffect(() => {
     fetchDatasets()
     fetchTemplates()
   }, [])
-
-  useEffect(() => {
-    if (selectedFilename) {
-      fetchVideoImages(selectedFilename)
-    } else {
-      setVideoImages([])
-    }
-  }, [selectedFilename])
 
   useEffect(() => {
     if (!annotate) return
@@ -1794,43 +1668,6 @@ function App() {
     }
   }, [showExportPanel, datasetBatches])
 
-  const handleFileChange = async (event) => {
-    const files = event.target.files ? Array.from(event.target.files) : []
-    if (files.length === 0) return
-
-    const uploaded = []
-    const failed = []
-    setStatus(`Uploading ${files.length} video${files.length === 1 ? '' : 's'}...`)
-    for (const file of files) {
-      const formData = new FormData()
-      formData.append('file', file)
-      try {
-        const response = await fetch('/api/upload/video', {
-          method: 'POST',
-          body: formData,
-        })
-        const data = await response.json()
-        if (response.ok) {
-          uploaded.push(data.filename)
-        } else {
-          failed.push(`${file.name}: ${data.detail ?? 'Unknown error'}`)
-        }
-      } catch {
-        failed.push(`${file.name}: could not reach server`)
-      }
-    }
-
-    if (failed.length === 0) {
-      setStatus(`Uploaded ${uploaded.length} video${uploaded.length === 1 ? '' : 's'}`)
-    } else {
-      setStatus(
-        `Uploaded ${uploaded.length}, failed ${failed.length}: ${failed.join('; ')}`,
-      )
-    }
-    if (uploaded.length > 0) fetchVideos()
-    event.target.value = ''
-  }
-
   const handleImageChange = async (event) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -1849,11 +1686,7 @@ function App() {
         const batchLabel = data.batches?.length
           ? `batches ${data.batches.join(', ')}`
           : `batch ${data.batch}`
-        setStatus(
-          `Uploaded ${batchLabel}: ${data.image_count} images, ${data.video_count} videos`,
-        )
-        fetchVideos()
-        fetchImages()
+        setStatus(`Uploaded ${batchLabel}: ${data.image_count} images`)
         fetchBatches()
       } else {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
@@ -1874,25 +1707,12 @@ function App() {
               Dataset Collector
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              {activePage === 'raw_video'
-                ? 'Upload videos and extract frames or crops'
-                : activePage === 'raw_image'
+              {activePage === 'raw_image'
                 ? 'Upload TARs and curate imported, frames, and crops'
                 : 'Organize batches and export datasets'}
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActivePage('raw_video')}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                activePage === 'raw_video'
-                  ? 'bg-indigo-500 text-white shadow'
-                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-              }`}
-            >
-              Raw Video
-            </button>
             <button
               type="button"
               onClick={() => setActivePage('raw_image')}
@@ -1918,7 +1738,7 @@ function App() {
           </div>
         </header>
 
-        {activePage === 'raw_video' && (
+        {/*
           <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-slate-800">Videos</h2>
@@ -2225,7 +2045,7 @@ function App() {
             </div>
           )}
         </section>
-        )}
+        */}
 
         {activePage === 'raw_image' && (
         <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
@@ -2299,7 +2119,7 @@ function App() {
             ) : null}
           </div>
           <div className="mt-4 flex max-w-full gap-3 overflow-x-auto overscroll-x-contain p-3">
-            {rawSources.map(({ source, batch, previews }) => (
+            {rawSources.map(({ id, source, batch, previews }) => (
               <button
                 key={source}
                 type="button"
@@ -2316,8 +2136,9 @@ function App() {
                     })
                   } else {
                     setSelectedRaw(source)
+                    setSelectedBatchId(id)
                     setImagePage(0)
-                    fetchRawImages(batch)
+                    fetchRawImages(id)
                   }
                 }}
                 className={`group relative aspect-video w-40 shrink-0 overflow-hidden rounded-lg shadow-sm transition hover:shadow-md ${
@@ -2481,7 +2302,7 @@ function App() {
               <div className="mt-4 grid grid-cols-6 gap-3 rounded-2xl border border-white/60 bg-white/70 p-3 shadow-sm backdrop-blur-sm">
                 {pageImages.map((image, index) => (
                   <button
-                    key={image}
+                    key={image.id ?? image}
                     type="button"
                     onClick={() =>
                       setModalIndex(imagePage * IMAGES_PER_PAGE + index)
@@ -2489,7 +2310,7 @@ function App() {
                     className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
                   >
                     <img
-                      src={`/api${image}`}
+                      src={`/api${image.path ?? image}`}
                       alt=""
                       className="aspect-video w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105"
                     />
@@ -2716,29 +2537,22 @@ function App() {
                   </button>
                 )}
                 <div className="ml-auto flex items-center gap-2">
-                  <select
-                    value=""
+                  <button
+                    type="button"
+                    onClick={doPrelabel}
                     disabled={!templatePath || preLabeling}
-                    onChange={(e) => {
-                      const mode = e.target.value
-                      e.target.value = ''
-                      if (mode === 'prelabel') {
-                        doPrelabel()
-                      }
-                      if (mode === 'attribute') {
-                        openAttrAnnotate(activeDataset, templatePath)
-                      }
-                    }}
-                    className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 outline-none disabled:opacity-40"
+                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
                   >
-                    <option value="" disabled>
-                      Label
-                    </option>
-                    <option value="prelabel">
-                      {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
-                    </option>
-                    <option value="attribute">Correct Attribute</option>
-                  </select>
+                    {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openAttrAnnotate(activeDataset, templatePath)}
+                    disabled={!templatePath || preLabeling}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
+                  >
+                    Correct Attribute
+                  </button>
                   <button
                     type="button"
                     onClick={openImportBatch}
@@ -2753,6 +2567,25 @@ function App() {
                     className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
                   >
                     Export dataset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openDatasetSettings}
+                    title="Dataset settings"
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-4 w-4"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
                   </button>
                   <button
                     type="button"
@@ -3269,8 +3102,8 @@ function App() {
             <div className="grid grid-cols-6 gap-2">
               {activeImages.map((image, i) => (
                 <img
-                  key={image}
-                  src={`/api${image}`}
+                  key={image.id ?? image}
+                  src={`/api${image.path ?? image}`}
                   alt=""
                   onClick={() => setRemoveIndex(i)}
                   className="aspect-video w-full cursor-pointer rounded object-cover opacity-60 shadow transition hover:opacity-100 hover:ring-2 hover:ring-indigo-400"
@@ -3322,9 +3155,11 @@ function App() {
               await fetch('/api/images/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ paths: [...markedForRemoval] }),
+                body: JSON.stringify({ ids: [...markedForRemoval] }),
               })
-              await fetchImages()
+              if (selectedBatchId) {
+                fetchRawImages(selectedBatchId)
+              }
             } catch {
               setStatus('Failed: could not reach the server')
             }
@@ -3360,26 +3195,6 @@ function App() {
           message="This removes all images in this batch from the dataset. The original files will not be deleted."
           onCancel={() => setConfirmingRemoveDatasetBatch(false)}
           onConfirm={removeDatasetBatch}
-        />
-      )}
-
-      {confirmingRemoveVideos && (
-        <ConfirmModal
-          count={selectedVideosToRemove.size}
-          title={`Delete ${selectedVideosToRemove.size} video${selectedVideosToRemove.size === 1 ? '' : 's'}?`}
-          message="This will permanently remove the selected videos and all their extracted images. This action cannot be undone."
-          onCancel={() => setConfirmingRemoveVideos(false)}
-          onConfirm={doDeleteSelectedVideos}
-        />
-      )}
-
-      {confirmingRemoveVideoBatch && (
-        <ConfirmModal
-          count={1}
-          title="Remove batch?"
-          message={`This will permanently remove ${selectedVideoBatch} and all its images. This action cannot be undone.`}
-          onCancel={() => setConfirmingRemoveVideoBatch(false)}
-          onConfirm={doRemoveVideoBatch}
         />
       )}
 
@@ -3665,22 +3480,23 @@ function App() {
               ) : (
                 <div className="grid max-h-96 grid-cols-4 gap-3 overflow-y-auto p-1">
                   {availableBatches.map((batch) => {
-                    const selected = selectedImportBatches.has(batch.name)
+                    const selected = batch.id && selectedImportBatches.has(batch.id)
                     const imported = datasetBatches.includes(
                       batch.name.replace(/\//g, '_'),
                     )
                     return (
                       <button
-                        key={batch.name}
+                        key={batch.id ?? batch.name}
                         type="button"
                         title={batch.name}
+                        disabled={!batch.id}
                         onClick={() =>
                           setSelectedImportBatches((prev) => {
                             const next = new Set(prev)
-                            if (next.has(batch.name)) {
-                              next.delete(batch.name)
+                            if (next.has(batch.id)) {
+                              next.delete(batch.id)
                             } else {
-                              next.add(batch.name)
+                              next.add(batch.id)
                             }
                             return next
                           })
@@ -3747,6 +3563,86 @@ function App() {
         </div>
       )}
 
+      {datasetSettingsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setDatasetSettingsOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-slate-800">
+              Dataset Settings
+            </h2>
+            <div className="mt-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  value={datasetNameEdit}
+                  onChange={(e) => setDatasetNameEdit(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Model template
+                </label>
+                <select
+                  value={datasetModelEdit}
+                  onChange={(e) => setDatasetModelEdit(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none"
+                >
+                  <option value="">No template</option>
+                  {Object.entries(
+                    templates.reduce((acc, t) => {
+                      const group = t.framework || 'Other'
+                      if (!acc[group]) acc[group] = []
+                      acc[group].push(t)
+                      return acc
+                    }, {}),
+                  )
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([framework, items]) => (
+                      <optgroup key={framework} label={framework}>
+                        {items.map((t) => (
+                          <option key={t.name} value={t.name}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDatasetSettingsOpen(false)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={doSaveDatasetSettings}
+                disabled={
+                  savingDatasetSettings ||
+                  !datasetNameEdit.trim() ||
+                  !datasetModelEdit
+                }
+                className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
+              >
+                {savingDatasetSettings ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {assignToDatasetOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
@@ -3774,11 +3670,14 @@ function App() {
                   onChange={(e) => setAssignToDatasetBatch(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
                 >
-                  {batches.map((batch) => (
-                    <option key={batch} value={batch}>
-                      {batch}
-                    </option>
-                  ))}
+                  {batches.map((batch) => {
+                    const name = typeof batch === 'string' ? batch : batch.name
+                    return (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    )
+                  })}
                 </select>
               )}
             </div>

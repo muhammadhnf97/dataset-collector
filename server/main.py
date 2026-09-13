@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from sqlalchemy.dialects.sqlite import insert
 from db import (
     SessionLocal,
     init_db,
@@ -41,11 +42,10 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 RAW_IMAGES_DIR = UPLOADS_DIR / "raw-images"
-VIDEOS_DIR = UPLOADS_DIR / "videos"
 DATASETS_DIR = BASE_DIR / "datasets"
 TEMPLATES_DIR = BASE_DIR / "template"
 
-for directory in (RAW_IMAGES_DIR, VIDEOS_DIR, DATASETS_DIR):
+for directory in (RAW_IMAGES_DIR, DATASETS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
@@ -89,14 +89,6 @@ def next_raw_images_name():
     return f"raw-images-{max(numbers, default=0) + 1}"
 
 
-def next_video_name():
-    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-    numbers = [
-        int(m.group(1))
-        for d in VIDEOS_DIR.iterdir()
-        if d.is_dir() and (m := re.fullmatch(r"video-(\d+)", d.name))
-    ]
-    return f"video-{max(numbers, default=0) + 1}"
 
 
 def next_batch_name(parent: Path):
@@ -280,73 +272,13 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/upload/video")
-async def upload_video(file: UploadFile = File(...)):
-    if file.content_type and not file.content_type.startswith("video/"):
-        raise HTTPException(status_code=400, detail="File must be a video")
-
-    suffix = Path(file.filename or "").suffix
-    video_name = next_video_name()
-    video_dir = VIDEOS_DIR / video_name
-    video_dir.mkdir(parents=True)
-    (video_dir / "imgs").mkdir(parents=True)
-
-    destination = video_dir / f"{video_name}{suffix}"
-    with destination.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    thumbnail_url = make_thumbnail(destination, video_name)
-
-    db = SessionLocal()
-    try:
-        video_batch = DbBatch(
-            name=f"videos/{video_name}",
-            type="video",
-            source=None,
-            cover=thumbnail_url,
-        )
-        db.add(video_batch)
-        db.commit()
-    finally:
-        db.close()
-
-    return {
-        "filename": video_name,
-        "original_filename": file.filename,
-        "path": str(destination),
-        "size": destination.stat().st_size,
-        "thumbnail_url": thumbnail_url,
-    }
-
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
-
-
-def make_thumbnail(video_path: Path, batch: str):
-    thumbnail_path = VIDEOS_DIR / batch / "thumbnail.jpg"
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i", str(video_path),
-            "-ss", "00:00:01",
-            "-frames:v", "1",
-            str(thumbnail_path),
-        ],
-        capture_output=True,
-    )
-    return (
-        f"/uploads/videos/{batch}/thumbnail.jpg"
-        if result.returncode == 0
-        else None
-    )
 
 
 @app.post("/upload/tar")
 def _process_uploaded_files(tmp_path: Path):
     saved_images = []
-    saved_videos = []
     folders = {}
     batches = []
     batch_objs = {}
@@ -408,15 +340,6 @@ def _process_uploaded_files(tmp_path: Path):
                     batch.cover = image_path
 
                 saved_images.append(image_path)
-            elif ext in VIDEO_EXTENSIONS:
-                video_name = next_video_name()
-                video_dir = VIDEOS_DIR / video_name
-                video_dir.mkdir(parents=True)
-                (video_dir / "imgs").mkdir(parents=True)
-                dest = video_dir / f"{video_name}{ext}"
-                shutil.move(str(item), dest)
-                make_thumbnail(dest, video_name)
-                saved_videos.append(f"/uploads/videos/{video_name}/{video_name}{ext}")
 
         db.commit()
     finally:
@@ -426,9 +349,7 @@ def _process_uploaded_files(tmp_path: Path):
         "batch": f"raw-images/{batches[0]}" if batches else None,
         "batches": [f"raw-images/{b}" for b in batches],
         "images": saved_images,
-        "videos": saved_videos,
         "image_count": len(saved_images),
-        "video_count": len(saved_videos),
     }
 
 
@@ -521,99 +442,11 @@ async def upload_image(file: UploadFile = File(...)):
         return {
             "batch": f"raw-images/{batch_name}",
             "images": [image_path],
-            "videos": [],
             "image_count": 1,
-            "video_count": 0,
         }
 
     raise HTTPException(status_code=400, detail="Unsupported file type")
 
-
-@app.get("/videos")
-def list_videos():
-    videos = []
-    for video_dir in sorted(VIDEOS_DIR.iterdir()):
-        if not video_dir.is_dir():
-            continue
-        video_files = [f for f in video_dir.iterdir() if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS]
-        if not video_files:
-            continue
-        video = video_files[0]
-        thumbnail = video_dir / "thumbnail.jpg"
-        imgs_dir = video_dir / "imgs"
-        batch_count = sum(
-            1
-            for batch_dir in imgs_dir.iterdir()
-            if batch_dir.is_dir() and re.fullmatch(r"batch-\d+(?:-(?:frames|crops))?", batch_dir.name)
-        ) if imgs_dir.is_dir() else 0
-        videos.append(
-            {
-                "filename": video_dir.name,
-                "original_filename": video.name,
-                "video_url": f"/uploads/videos/{video_dir.name}/{video.name}",
-                "thumbnail_url": (
-                    f"/uploads/videos/{video_dir.name}/thumbnail.jpg"
-                    if thumbnail.exists()
-                    else None
-                ),
-                "uploaded_at": video.stat().st_mtime,
-                "batch_count": batch_count,
-            }
-        )
-    videos.sort(key=lambda item: item["uploaded_at"], reverse=True)
-    return {"videos": videos}
-
-
-@app.get("/videos/{filename}/images")
-def list_video_images(filename: str):
-    if any(c in filename for c in ("/", "\\", "..")):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    imgs_dir = VIDEOS_DIR / filename / "imgs"
-    if not imgs_dir.is_dir():
-        return {"images": []}
-    images = []
-    for batch_dir in sorted(imgs_dir.iterdir()):
-        if not batch_dir.is_dir():
-            continue
-        for f in sorted(batch_dir.iterdir()):
-            if f.is_file() and f.suffix.lower() in _image_extensions():
-                images.append(
-                    f"/uploads/videos/{filename}/imgs/{batch_dir.name}/{f.name}"
-                )
-    return {"images": images}
-
-
-@app.delete("/videos/{filename}")
-def delete_video(filename: str):
-    if any(c in filename for c in ("/", "\\", "..")):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    video_dir = VIDEOS_DIR / filename
-    if not video_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    if video_dir.exists():
-        shutil.rmtree(video_dir)
-    return {"deleted": filename}
-
-
-@app.delete("/videos/{filename}/batches/{batch_name}")
-def delete_video_batch(filename: str, batch_name: str):
-    if any(c in filename for c in ("/", "\\", "..")):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if any(c in batch_name for c in ("/", "\\", "..")):
-        raise HTTPException(status_code=400, detail="Invalid batch name")
-    if not re.fullmatch(r"batch-\d+(?:-(?:frames|crops))?", batch_name):
-        raise HTTPException(status_code=400, detail="Invalid batch name")
-
-    video_dir = VIDEOS_DIR / filename
-    if not video_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    batch_dir = video_dir / "imgs" / batch_name
-    if batch_dir.is_dir():
-        shutil.rmtree(batch_dir)
-
-    return {"deleted": batch_name}
 
 
 @app.get("/classes")
@@ -621,189 +454,6 @@ def list_classes():
     model = get_model()
     return {"classes": sorted(set(model.names.values()))}
 
-
-@app.post("/videos/{filename}/frames")
-def extract_frames(
-    filename: str,
-    frames_per_minute: int,
-    margin: int = 0,
-    classes: str = "",
-    mode: str = "crops",
-    confidence: float = 0.70,
-):
-    if mode not in ("frames", "crops"):
-        raise HTTPException(
-            status_code=400, detail="mode must be 'frames' or 'crops'"
-        )
-    if not 1 <= frames_per_minute <= 60:
-        raise HTTPException(
-            status_code=400,
-            detail="frames_per_minute must be between 1 and 60",
-        )
-    if margin < 0:
-        raise HTTPException(
-            status_code=400,
-            detail="margin must be non-negative",
-        )
-
-    video_dir = VIDEOS_DIR / filename
-    if not video_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Video not found")
-
-    video_files = [
-        f
-        for f in video_dir.iterdir()
-        if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS
-    ]
-    if not video_files:
-        raise HTTPException(status_code=404, detail="Video file not found")
-    video_path = video_files[0]
-    video_name = filename
-
-    imgs_dir = video_dir / "imgs"
-    existing_numbers = [
-        int(m.group(1))
-        for d in imgs_dir.iterdir()
-        if d.is_dir() and (m := re.fullmatch(r"batch-(\d+)", d.name))
-    ]
-    batch_number = max(existing_numbers, default=0) + 1
-    imgs_batch_dir = imgs_dir / f"batch-{batch_number}-{mode}"
-    imgs_batch_dir.mkdir(parents=True)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i", str(video_path),
-                "-vf", f"fps={frames_per_minute}/60",
-                str(tmp_path / "frame_%04d.jpg"),
-            ],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail="Failed to extract frames")
-
-        frames = sorted(tmp_path.glob("frame_*.jpg"))
-
-        selected_classes = {c.strip() for c in classes.split(",") if c.strip()}
-        need_model = mode == "crops" or (mode == "frames" and selected_classes)
-        if need_model:
-            model = get_model()
-
-        if mode == "frames":
-            frame_urls = []
-            frame_index = 0
-            for frame in frames:
-                if selected_classes:
-                    results = model(str(frame), verbose=False)
-                    boxes = results[0].boxes if results else None
-                    if boxes is None or len(boxes) == 0:
-                        continue
-                    found = any(
-                        conf > confidence and model.names[int(cls)] in selected_classes
-                        for conf, cls in zip(boxes.conf.tolist(), boxes.cls.tolist())
-                    )
-                    if not found:
-                        continue
-                frame_index += 1
-                name = f"batch-{batch_number}-{frame_index}.jpg"
-                dest = imgs_batch_dir / name
-                img = Image.open(frame)
-                img.save(dest, "JPEG", quality=95)
-                frame_urls.append(f"/uploads/videos/{filename}/imgs/{imgs_batch_dir.name}/{name}")
-
-            db = SessionLocal()
-            try:
-                db_batch = DbBatch(
-                    name=f"videos/{filename}/imgs/{imgs_batch_dir.name}",
-                    type="frames",
-                    source=f"videos/{filename}",
-                    cover=frame_urls[0] if frame_urls else None,
-                )
-                db.add(db_batch)
-                db.flush()
-                for url in frame_urls:
-                    db.add(
-                        DbImage(
-                            batch_id=db_batch.id,
-                            path=url,
-                            filename=Path(url).name,
-                        )
-                    )
-                db.commit()
-            finally:
-                db.close()
-
-            return {
-                "frames_per_minute": frames_per_minute,
-                "count": len(frame_urls),
-                "frames": frame_urls,
-                "crops": [],
-                "crop_count": 0,
-            }
-
-        crop_urls = []
-        crop_index = 0
-        for frame in frames:
-            results = model(str(frame), verbose=False)
-            boxes = results[0].boxes if results else None
-            if boxes is None or len(boxes) == 0:
-                continue
-            image = Image.open(frame)
-            for box, conf, cls in zip(
-                boxes.xyxy.tolist(),
-                boxes.conf.tolist(),
-                boxes.cls.tolist(),
-            ):
-                if conf <= confidence:
-                    continue
-                if (
-                    selected_classes
-                    and model.names[int(cls)] not in selected_classes
-                ):
-                    continue
-                x1, y1, x2, y2 = (int(v) for v in box)
-                w, h = image.size
-                x1 = max(0, x1 - margin)
-                y1 = max(0, y1 - margin)
-                x2 = min(w, x2 + margin)
-                y2 = min(h, y2 + margin)
-                crop = image.crop((x1, y1, x2, y2))
-                crop_index += 1
-                name = f"batch-{batch_number}-{crop_index}.jpg"
-                dest = imgs_batch_dir / name
-                crop.save(dest, "JPEG", quality=95)
-                crop_urls.append(f"/uploads/videos/{filename}/imgs/{imgs_batch_dir.name}/{name}")
-
-    db = SessionLocal()
-    try:
-        db_batch = DbBatch(
-            name=f"videos/{filename}/imgs/{imgs_batch_dir.name}",
-            type="crops",
-            source=f"videos/{filename}",
-            cover=crop_urls[0] if crop_urls else None,
-        )
-        db.add(db_batch)
-        db.flush()
-        for url in crop_urls:
-            db.add(
-                DbImage(
-                    batch_id=db_batch.id,
-                    path=url,
-                    filename=Path(url).name,
-                )
-            )
-        db.commit()
-    finally:
-        db.close()
-
-    return {
-        "frames_per_minute": frames_per_minute,
-        "crops": crop_urls,
-        "crop_count": len(crop_urls),
-    }
 
 
 @app.post("/raw-images/{source:path}/generate")
@@ -1200,97 +850,71 @@ def delete_dataset(name: str):
 @app.post("/datasets/{name:path}/import")
 def import_dataset_batch(name: str, payload: dict):
     name = unquote(name)
+    batch_ids = payload.get("batch_ids") or []
     batches = payload.get("batches") or []
-    if not batches:
+    if not batch_ids and not batches:
         single = (payload.get("batch") or "").strip()
         if single:
             batches = [single]
-    if not batches:
+    if not batch_ids and not batches:
         raise HTTPException(status_code=400, detail="Batches required")
-    datasets = load_datasets()
-    if name not in datasets:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    entry = datasets[name]
-    dataset_dir_name = entry.get("dir")
-    if not dataset_dir_name:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    framework = (entry.get("framework") or "").strip()
-    model = (entry.get("model") or "").strip()
-    if not framework or not model:
-        raise HTTPException(status_code=400, detail="Dataset framework/model not set")
-    config = load_template_config(
-        _normalize_template_path(framework, model)
-    )
-    attributes = config.get("attributes", [])
-    if not attributes:
-        raise HTTPException(status_code=400, detail="Template has no attributes")
-    dataset_dir = DATASETS_DIR / dataset_dir_name
-    dataset_dir.mkdir(parents=True, exist_ok=True)
 
     db = SessionLocal()
     try:
-        db_dataset = (
-            db.query(DbDataset).filter_by(name=name).first()
-            or db.query(DbDataset).filter_by(dir_name=dataset_dir_name).first()
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        framework = (db_dataset.framework or "").strip()
+        model = (db_dataset.model or "").strip()
+        if not framework or not model:
+            raise HTTPException(status_code=400, detail="Dataset framework/model not set")
+        config = load_template_config(
+            _normalize_template_path(framework, model)
         )
-        existing_images = set()
-        if db_dataset:
-            existing_images = {
-                di.image_id
-                for di in db.query(DbDatasetImage)
-                .filter_by(dataset_id=db_dataset.id)
-                .all()
-            }
+        attributes = config.get("attributes", [])
+        if not attributes:
+            raise HTTPException(status_code=400, detail="Template has no attributes")
 
-        results = []
-        for batch in batches:
-            batch = (batch or "").strip()
-            if not batch:
-                continue
-            batch_dir = (UPLOADS_DIR / batch).resolve()
-            if (
-                not batch_dir.is_dir()
-                or not batch_dir.is_relative_to(UPLOADS_DIR.resolve())
-            ):
-                continue
-            images = [
-                f
-                for f in batch_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in _image_extensions()
-            ]
-            images.sort()
-            results.append({
-                "file": None,
-                "count": len(images),
-            })
+        existing_images = {
+            di.image_id
+            for di in db.query(DbDatasetImage)
+            .filter_by(dataset_id=db_dataset.id)
+            .all()
+        }
 
-            if not db_dataset:
-                continue
-
-            batch_path = Path(batch)
-            if batch_path.parts[0] == "raw-images" and len(batch_path.parts) > 1:
-                db_batch = (
-                    db.query(DbBatch)
-                    .filter_by(name=batch_path.name, type="raw")
-                    .first()
-                )
-            else:
-                db_batch = db.query(DbBatch).filter_by(name=batch).first()
-            if not db_batch:
-                continue
-
-            for img in images:
-                rel = img.relative_to(UPLOADS_DIR)
-                img_path = f"/uploads/{rel.as_posix()}"
-                db_image = db.query(DbImage).filter_by(path=img_path).first()
-                if not db_image:
-                    db_image = DbImage(
-                        batch_id=db_batch.id,
-                        path=img_path,
-                        filename=img.name,
+        target_batches = []
+        if batch_ids:
+            for bid in batch_ids:
+                try:
+                    bid = int(bid)
+                except (TypeError, ValueError):
+                    continue
+                db_batch = db.query(DbBatch).filter_by(id=bid).first()
+                if db_batch:
+                    target_batches.append(db_batch)
+        elif batches:
+            for batch in batches:
+                batch = (batch or "").strip()
+                if not batch:
+                    continue
+                batch_path = Path(batch)
+                if batch_path.parts[0] == "raw-images" and len(batch_path.parts) > 1:
+                    db_batch = (
+                        db.query(DbBatch)
+                        .filter_by(name=batch_path.name, type="raw")
+                        .first()
                     )
-                    db.add(db_image)
-                    db.flush()
+                else:
+                    db_batch = db.query(DbBatch).filter_by(name=batch).first()
+                if db_batch:
+                    target_batches.append(db_batch)
+
+        total = 0
+        results = []
+        for db_batch in target_batches:
+            added = 0
+            for db_image in db_batch.images:
                 if db_image.id in existing_images:
                     continue
                 db.add(
@@ -1301,6 +925,9 @@ def import_dataset_batch(name: str, payload: dict):
                     )
                 )
                 existing_images.add(db_image.id)
+                added += 1
+            results.append({"name": db_batch.name, "count": added})
+            total += added
 
         db.commit()
     finally:
@@ -1309,8 +936,8 @@ def import_dataset_batch(name: str, payload: dict):
     if not results:
         raise HTTPException(status_code=404, detail="No valid batches found")
     return {
-        "files": [r["file"] for r in results],
-        "count": sum(r["count"] for r in results),
+        "batches": [r["name"] for r in results],
+        "count": total,
     }
 
 
@@ -1333,6 +960,54 @@ def set_dataset_template(name: str, payload: dict):
         entry["model"] = model
         save_datasets(datasets)
     return {"dataset": name, "framework": framework, "model": model}
+
+
+@app.patch("/datasets/{name:path}/settings")
+def update_dataset_settings(name: str, payload: dict):
+    from urllib.parse import unquote
+    name = unquote(name)
+    new_name = (payload.get("name") or "").strip()
+    template = (payload.get("template") or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Dataset name is required")
+
+    framework = ""
+    model = ""
+    if template:
+        config = load_template_config(template)
+        framework = (config.get("framework-name") or "").strip()
+        model = (config.get("model-name") or "").strip()
+    if not framework or not model:
+        framework = (payload.get("framework") or "").strip()
+        model = (payload.get("model") or "").strip()
+    if not framework or not model:
+        raise HTTPException(status_code=400, detail="Model template is required")
+
+    db = SessionLocal()
+    try:
+        ds = db.query(DbDataset).filter_by(name=name).first()
+        if not ds:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        if new_name != name and db.query(DbDataset).filter_by(name=new_name).first():
+            raise HTTPException(status_code=400, detail="Dataset name already exists")
+        ds.name = new_name
+        ds.framework = framework
+        ds.model = model
+        dir_name = ds.dir_name
+        db.commit()
+    finally:
+        db.close()
+
+    manifest = _load_manifest(DATASETS_DIR / dir_name / "manifest.json") or {}
+    manifest["name"] = new_name
+    manifest["framework"] = framework
+    manifest["model"] = model
+    manifest_path = DATASETS_DIR / dir_name / "manifest.json"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f)
+
+    return {"dataset": new_name, "framework": framework, "model": model}
 
 
 def _create_prelabel_predictor(model_dir: Path):
@@ -1621,14 +1296,19 @@ def load_annotations(dir_name: str):
                 db.commit()
 
         result = {}
-        for ann in db.query(DbAnnotation).filter_by(dataset_id=db_dataset.id).all():
-            result[ann.image.path] = ann.values
+        for path, values in (
+            db.query(DbImage.path, DbAnnotation.values)
+            .join(DbAnnotation, DbImage.id == DbAnnotation.image_id)
+            .filter(DbAnnotation.dataset_id == db_dataset.id)
+            .all()
+        ):
+            result[path] = values
         return result
     finally:
         db.close()
 
 
-def save_annotations(dir_name: str, data: dict):
+def save_annotations(dir_name: str, data: dict, updated_by="system", updated_keys=None):
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(dir_name=dir_name).first()
@@ -1652,6 +1332,8 @@ def save_annotations(dir_name: str, data: dict):
                 )
                 db.add(ann)
             ann.values = values
+            if updated_by is not None and (updated_keys is None or img_path in updated_keys):
+                ann.updated_by = updated_by
         db.commit()
     finally:
         db.close()
@@ -1676,19 +1358,34 @@ def set_dataset_annotation(name: str, payload: dict):
         raise HTTPException(status_code=400, detail="image is required")
     if not isinstance(values, list) or not all(v in (0, 1) for v in values):
         raise HTTPException(status_code=400, detail="values must be a list of 0/1")
-    datasets = load_datasets()
-    if name not in datasets:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    dir_name = datasets[name].get("dir")
-    if not dir_name:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    # Serialize read-modify-write per dataset so two people annotating
-    # different images at the same time don't clobber each other other's save.
-    with annotation_lock(dir_name):
-        annotations = load_annotations(dir_name)
-        annotations[image] = values
-        save_annotations(dir_name, annotations)
-    return {"dataset": name, "image": image, "values": values}
+
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        db_image = db.query(DbImage).filter_by(path=image).first()
+        if not db_image:
+            raise HTTPException(status_code=404, detail="Image not found")
+
+        stmt = insert(DbAnnotation).values(
+            dataset_id=db_dataset.id,
+            image_id=db_image.id,
+            values=values,
+            updated_by="root",
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["dataset_id", "image_id"],
+            set_={
+                "values": stmt.excluded["values"],
+                "updated_by": stmt.excluded["updated_by"],
+            },
+        )
+        db.execute(stmt)
+        db.commit()
+    finally:
+        db.close()
+    return {"dataset": name, "image": image, "values": values, "updated_by": "root"}
 
 
 @app.post("/datasets/{name}/assign")
@@ -1925,34 +1622,43 @@ def _batch_directories():
         for source_dir in sorted(RAW_IMAGES_DIR.iterdir()):
             if source_dir.is_dir() and any(source_dir.iterdir()):
                 yield source_dir
-    if VIDEOS_DIR.is_dir():
-        for source_dir in sorted(VIDEOS_DIR.iterdir()):
-            if not source_dir.is_dir():
-                continue
-            imgs_dir = source_dir / "imgs"
-            if not imgs_dir.is_dir():
-                continue
-            for batch_dir in sorted(imgs_dir.iterdir()):
-                if batch_dir.is_dir():
-                    yield batch_dir
 
 
 @app.get("/batches")
 def list_batches():
     db = SessionLocal()
     try:
-        batch_set = set()
+        items = []
+        db_batch_names = set()
         for batch in db.query(DbBatch).order_by(DbBatch.name).all():
             name = (
                 f"raw-images/{batch.name}"
                 if batch.type == "raw"
                 else batch.name
             )
-            batch_set.add(name)
+            items.append({"id": batch.id, "name": name, "cover": batch.cover})
+            db_batch_names.add(batch.name)
+        seen = {i["name"] for i in items}
         for batch_dir in _batch_directories():
             name = str(batch_dir.relative_to(UPLOADS_DIR))
-            batch_set.add(name)
-        return {"batches": sorted(batch_set)}
+            if name in seen or batch_dir.name in db_batch_names:
+                continue
+            images = [
+                f
+                for f in batch_dir.iterdir()
+                if f.is_file() and f.suffix.lower() in _image_extensions()
+            ]
+            images.sort()
+            cover = (
+                f"/uploads/{batch_dir.relative_to(UPLOADS_DIR)}/{images[0].name}"
+                if images
+                else None
+            )
+            items.append({"name": name, "cover": cover})
+        items.sort(key=lambda x: x["name"])
+        model = get_model()
+        classes = sorted(set(model.names.values()))
+        return {"batches": items, "classes": classes}
     finally:
         db.close()
 
@@ -1962,6 +1668,7 @@ def list_batch_covers():
     db = SessionLocal()
     try:
         seen = set()
+        db_batch_names = set()
         covers = []
 
         for batch in db.query(DbBatch).order_by(DbBatch.name).all():
@@ -1971,8 +1678,10 @@ def list_batch_covers():
                 else batch.name
             )
             seen.add(name)
+            db_batch_names.add(batch.name)
             covers.append(
                 {
+                    "id": batch.id,
                     "name": name,
                     "cover": batch.cover,
                     "count": len(batch.images),
@@ -1981,7 +1690,7 @@ def list_batch_covers():
 
         for batch_dir in _batch_directories():
             name = str(batch_dir.relative_to(UPLOADS_DIR))
-            if name in seen:
+            if name in seen or batch_dir.name in db_batch_names:
                 continue
             seen.add(name)
             images = [
@@ -1993,6 +1702,7 @@ def list_batch_covers():
             cover = batch_first_image(name)
             covers.append(
                 {
+                    "id": None,
                     "name": name,
                     "cover": cover,
                     "count": len(images),
@@ -2005,7 +1715,7 @@ def list_batch_covers():
 
 
 @app.get("/images")
-def list_images(batch: str | None = None):
+def list_images(batch: str | None = None, id: int | None = None):
     def _key_for_type(batch_type: str) -> str:
         if batch_type == "raw":
             return "imported"
@@ -2025,40 +1735,37 @@ def list_images(batch: str | None = None):
     result = {"imported": [], "frames": [], "crops": []}
     db = SessionLocal()
     try:
-        if batch:
-            batch_path = Path(batch)
-            if batch_path.parts[0] == "raw-images" and len(batch_path.parts) > 1:
-                batch_name = batch_path.name
-                image_rows = (
-                    db.query(DbImage)
-                    .join(DbBatch)
-                    .filter(DbBatch.name == batch_name, DbBatch.type == "raw")
-                    .order_by(DbImage.path)
-                    .all()
-                )
-            else:
-                image_rows = (
-                    db.query(DbImage)
-                    .join(DbBatch)
-                    .filter(DbBatch.name == batch)
-                    .order_by(DbImage.path)
-                    .all()
-                )
-            if image_rows:
-                key = _key_for_type(image_rows[0].batch.type)
-                result[key] = [row.path for row in image_rows]
-                return result
+        if id is not None:
+            image_rows = (
+                db.query(DbImage)
+                .filter(DbImage.batch_id == id)
+                .order_by(DbImage.path)
+                .all()
+            )
+            return {"images": [{"id": row.id, "path": row.path} for row in image_rows]}
 
-            batch_dir = (UPLOADS_DIR / batch).resolve()
+        if batch:
+            batch_name = Path(batch).name
+            image_rows = (
+                db.query(DbImage)
+                .join(DbBatch)
+                .filter(DbBatch.name == batch_name)
+                .order_by(DbImage.path)
+                .all()
+            )
+            if image_rows:
+                return {"images": [row.path for row in image_rows]}
+
+            batch_dir = (RAW_IMAGES_DIR / batch_name).resolve()
             if not batch_dir.is_dir() or not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
-                return result
-            key = _category_from_path(batch_dir)
-            result[key] = [
-                f"/uploads/{batch_dir.relative_to(UPLOADS_DIR)}/{image.name}"
-                for image in sorted(batch_dir.iterdir())
-                if image.is_file()
-            ]
-            return result
+                return {"images": []}
+            return {
+                "images": [
+                    f"/uploads/{batch_dir.relative_to(UPLOADS_DIR)}/{image.name}"
+                    for image in sorted(batch_dir.iterdir())
+                    if image.is_file()
+                ]
+            }
 
         db_batch_paths = set()
         for b in db.query(DbBatch).all():
@@ -2087,45 +1794,62 @@ def list_images(batch: str | None = None):
 
 @app.post("/images/delete")
 def delete_images(payload: dict):
-    deleted = []
-    uploads_root = UPLOADS_DIR.resolve()
-    for url in payload.get("paths", []):
-        rel = url.removeprefix("/uploads/")
-        target = (UPLOADS_DIR / rel).resolve()
-        if not target.is_relative_to(uploads_root):
-            continue
-        if target.is_file():
-            target.unlink()
-            deleted.append(url)
+    db = SessionLocal()
+    try:
+        rows = []
+        ids = payload.get("ids")
+        paths = payload.get("paths")
+        if ids:
+            ids = [int(i) for i in ids]
+            rows = db.query(DbImage).filter(DbImage.id.in_(ids)).all()
+        elif paths:
+            rows = db.query(DbImage).filter(DbImage.path.in_(paths)).all()
 
-    # Clean up database records for deleted images
-    if deleted:
-        db = SessionLocal()
-        try:
-            for url in deleted:
-                img = db.query(DbImage).filter(DbImage.path == url).first()
-                if not img:
-                    continue
-                batch = img.batch
-                db.delete(img)
-                db.flush()
-                remaining = (
+        uploads_root = UPLOADS_DIR.resolve()
+        deleted = []
+        for img in rows:
+            path = img.path
+            rel = path.removeprefix("/uploads/")
+            target = (UPLOADS_DIR / rel).resolve()
+            if not target.is_relative_to(uploads_root):
+                continue
+            if target.is_file():
+                target.unlink()
+            deleted.append(path)
+            batch = img.batch
+            db.delete(img)
+            db.flush()
+            remaining = (
+                db.query(DbImage)
+                .filter(DbImage.batch_id == batch.id)
+                .count()
+            )
+            if remaining == 0:
+                db.delete(batch)
+            elif batch.cover == path:
+                new_cover = (
                     db.query(DbImage)
                     .filter(DbImage.batch_id == batch.id)
-                    .count()
+                    .first()
                 )
-                if remaining == 0:
-                    db.delete(batch)
-                elif batch.cover == url:
-                    new_cover = (
-                        db.query(DbImage)
-                        .filter(DbImage.batch_id == batch.id)
-                        .first()
-                    )
-                    batch.cover = new_cover.path if new_cover else None
-            db.commit()
-        finally:
-            db.close()
+                batch.cover = new_cover.path if new_cover else None
+
+        # Remove any files that were passed by path but not in the database
+        if paths and not ids:
+            for path in paths:
+                if path in deleted:
+                    continue
+                rel = path.removeprefix("/uploads/")
+                target = (UPLOADS_DIR / rel).resolve()
+                if not target.is_relative_to(uploads_root):
+                    continue
+                if target.is_file():
+                    target.unlink()
+                    deleted.append(path)
+
+        db.commit()
+    finally:
+        db.close()
 
     # Clean up any dataset annotations that pointed to deleted images
     if deleted:
@@ -2143,6 +1867,6 @@ def delete_images(payload: dict):
                         del annotations[url]
                         changed = True
                 if changed:
-                    save_annotations(dir_name, annotations)
+                    save_annotations(dir_name, annotations, updated_by=None)
 
     return {"deleted": len(deleted)}
