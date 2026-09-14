@@ -363,8 +363,12 @@ async def upload_image(file: UploadFile = File(...)):
     if lowered.endswith(".zip"):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
+            archive_path = tmp_path / "archive.zip"
             try:
-                with zipfile.ZipFile(file.file) as zf:
+                file.file.seek(0)
+                with archive_path.open("wb") as archive:
+                    shutil.copyfileobj(file.file, archive)
+                with zipfile.ZipFile(archive_path) as zf:
                     zf.extractall(tmp_path)
             except zipfile.BadZipFile:
                 raise HTTPException(status_code=400, detail="Invalid zip archive")
@@ -669,6 +673,34 @@ def delete_batch(name: str):
     return {"deleted": name}
 
 
+@app.delete("/batches/by-id/{id}")
+def delete_batch_by_id(id: int):
+    db = SessionLocal()
+    try:
+        batch = db.query(DbBatch).get(id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+
+        for img in list(batch.images):
+            db.query(DbDatasetImage).filter_by(image_id=img.id).delete()
+            db.query(DbAnnotation).filter_by(image_id=img.id).delete()
+            db.delete(img)
+
+        batch_dir = (RAW_IMAGES_DIR / batch.name).resolve()
+        if not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid batch path")
+
+        db.delete(batch)
+        db.commit()
+
+        if batch_dir.is_dir():
+            shutil.rmtree(batch_dir)
+    finally:
+        db.close()
+
+    return {"deleted": id}
+
+
 def _dataset_summary(name: str, entry: dict):
     split = entry.get("split") or dict(DEFAULT_SPLIT)
     framework = (entry.get("framework") or "").strip()
@@ -694,11 +726,7 @@ def _dataset_summary(name: str, entry: dict):
                 .order_by(DbBatch.name)
                 .all()
             ):
-                display = (
-                    f"raw-images/{db_batch.name}"
-                    if db_batch.type == "raw"
-                    else db_batch.name
-                )
+                display = f"raw-images/{db_batch.name}"
                 batches.append(display.replace("/", "_"))
                 if not previews:
                     first_image = (
@@ -1178,11 +1206,7 @@ def remove_dataset_batch(name: str, batch: str):
 
         if display.startswith("raw-images/") and len(Path(display).parts) > 1:
             batch_name = Path(display).name
-            db_batch = (
-                db.query(DbBatch)
-                .filter_by(name=batch_name, type="raw")
-                .first()
-            )
+            db_batch = db.query(DbBatch).filter_by(name=batch_name).first()
         else:
             db_batch = db.query(DbBatch).filter_by(name=display).first()
 
@@ -1236,11 +1260,7 @@ def get_dataset_images(name: str):
                 .all()
             ):
                 db_image, db_batch = row
-                display = (
-                    f"raw-images/{db_batch.name}"
-                    if db_batch.type == "raw"
-                    else db_batch.name
-                )
+                display = f"raw-images/{db_batch.name}"
                 stem = display.replace("/", "_")
                 if stem not in groups:
                     groups[stem] = []
@@ -1467,11 +1487,7 @@ def export_dataset(name: str, payload: dict | None = None):
         )
         for db_image, db_batch in query:
             if selected_set:
-                display = (
-                    f"raw-images/{db_batch.name}"
-                    if db_batch.type == "raw"
-                    else db_batch.name
-                )
+                display = f"raw-images/{db_batch.name}"
                 if display.replace("/", "_") not in selected_set:
                     continue
             img = (UPLOADS_DIR / db_image.path.removeprefix("/uploads/")).resolve()
@@ -1612,11 +1628,7 @@ def list_batches():
     try:
         items = []
         for batch in db.query(DbBatch).order_by(DbBatch.name).all():
-            name = (
-                f"raw-images/{batch.name}"
-                if batch.type == "raw"
-                else batch.name
-            )
+            name = f"raw-images/{batch.name}"
             items.append({"id": batch.id, "name": name, "cover": batch.cover})
         items.sort(key=lambda x: x["name"])
         model = get_model()
@@ -1632,11 +1644,7 @@ def list_batch_covers():
     try:
         covers = []
         for batch in db.query(DbBatch).order_by(DbBatch.name).all():
-            name = (
-                f"raw-images/{batch.name}"
-                if batch.type == "raw"
-                else batch.name
-            )
+            name = f"raw-images/{batch.name}"
             covers.append(
                 {
                     "id": batch.id,

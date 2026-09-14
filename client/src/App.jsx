@@ -523,6 +523,12 @@ function App() {
       .sort((a, b) => a.source.localeCompare(b.source))
   }, [batches])
 
+  const datasetActiveImages = useMemo(() => {
+    return datasetBatchFilter
+      ? (datasetImageGroups[datasetBatchFilter] ?? [])
+      : datasetImages
+  }, [datasetBatchFilter, datasetImageGroups, datasetImages])
+
   const IMAGES_PER_PAGE = 50
   const pageCount = Math.max(
     1,
@@ -553,7 +559,7 @@ function App() {
     setDatasetModalIndex((i) =>
       i === null
         ? null
-        : (i + delta + datasetImages.length) % datasetImages.length,
+        : (i + delta + datasetActiveImages.length) % datasetActiveImages.length,
     )
   }
 
@@ -834,9 +840,7 @@ function App() {
           ...attributes.flatMap((g) => g.indices),
         ) + 1
       const filteredImages = batchFilter
-        ? (images.images ?? []).filter((src) =>
-            src.includes(`/imports/${batchFilter}/`),
-          )
+        ? (images.groups[batchFilter] ?? [])
         : images.images ?? []
       const annotations = annot.annotations ?? {}
       // Resume where you left off: start on the requested image, or the
@@ -893,9 +897,7 @@ function App() {
       const length =
         Math.max(0, ...attributes.flatMap((g) => g.indices)) + 1
       const filteredImages = batchFilter
-        ? (images.images ?? []).filter((src) =>
-            src.includes(`/imports/${batchFilter}/`),
-          )
+        ? (images.groups[batchFilter] ?? [])
         : images.images ?? []
       const annotations = annot.annotations ?? {}
       setAttrAnnotate({
@@ -2547,7 +2549,7 @@ function App() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => openAttrAnnotate(activeDataset, templatePath)}
+                    onClick={() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter)}
                     disabled={!templatePath || preLabeling}
                     className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
                   >
@@ -2615,7 +2617,7 @@ function App() {
                             key={src}
                             type="button"
                             onClick={() =>
-                              setDatasetModalIndex(datasetImages.indexOf(src))
+                              setDatasetModalIndex(datasetActiveImages.indexOf(src))
                             }
                             className={`relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
                               isAnnotated ? 'ring-2 ring-emerald-500' : ''
@@ -2662,7 +2664,7 @@ function App() {
       />
 
       <ImageModal
-        images={datasetImages}
+        images={datasetActiveImages}
         index={datasetModalIndex}
         onClose={() => setDatasetModalIndex(null)}
         onNavigate={navigateDatasetModal}
