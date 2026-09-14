@@ -1531,7 +1531,13 @@ function App() {
     try {
       const response = await fetch(
         `/api/datasets/${encodeURIComponent(activeDataset)}/prelabel`,
-        { method: 'POST' },
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            batch: datasetBatchFilter || '',
+          }),
+        },
       )
       const data = await response.json()
       if (!response.ok) {
@@ -1549,7 +1555,7 @@ function App() {
 
   const doPrelabel = () => {
     if (!activeDataset) return
-    const existing = datasetImages.filter(
+    const existing = datasetActiveImages.filter(
       (src) => datasetAnnotations[src] !== undefined,
     )
     if (existing.length > 0) {
@@ -3224,7 +3230,11 @@ function App() {
         <ConfirmModal
           count={prelabelConfirmCount}
           title="Pre-label will overwrite annotations"
-          message={`This dataset already has ${prelabelConfirmCount} annotated image${prelabelConfirmCount === 1 ? '' : 's'}. Running pre-label will overwrite them. Are you sure?`}
+          message={
+            datasetBatchFilter
+              ? `This batch already has ${prelabelConfirmCount} annotated image${prelabelConfirmCount === 1 ? '' : 's'}. Running pre-label will overwrite only this batch. Are you sure?`
+              : `This dataset already has ${prelabelConfirmCount} annotated image${prelabelConfirmCount === 1 ? '' : 's'}. Running pre-label will overwrite them. Are you sure?`
+          }
           onCancel={() => setPrelabelConfirmOpen(false)}
           onConfirm={runPrelabel}
           confirmLabel="Overwrite"

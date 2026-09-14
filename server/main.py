@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import yaml
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -1088,7 +1088,7 @@ def _prelabel_image(image_path: Path, model_parts) -> list[int]:
 
 
 @app.post("/datasets/{name:path}/prelabel")
-def prelabel_dataset(name: str):
+def prelabel_dataset(name: str, payload: dict = Body(default={})):
     name = unquote(name)
     datasets = load_datasets()
     if name not in datasets:
@@ -1121,6 +1121,21 @@ def prelabel_dataset(name: str):
     with tarfile.open(tar_path, "r") as tar:
         tar.extractall(model_dir, filter="data")
 
+    selected_batch = (payload.get("batch") or "").strip()
+    target_batch_id = None
+    if selected_batch:
+        if selected_batch.startswith("raw-images_"):
+            selected_batch = selected_batch.replace("raw-images_", "raw-images/", 1)
+        batch_name = Path(selected_batch).name
+        db = SessionLocal()
+        try:
+            db_batch = db.query(DbBatch).filter_by(name=batch_name).first()
+            if not db_batch:
+                raise HTTPException(status_code=404, detail="Batch not found")
+            target_batch_id = db_batch.id
+        finally:
+            db.close()
+
     annotations = load_annotations(dir_name)
     count = 0
     model_parts = _create_prelabel_predictor(model_dir)
@@ -1128,12 +1143,14 @@ def prelabel_dataset(name: str):
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
         if db_dataset:
-            for db_image in (
+            query = (
                 db.query(DbImage)
                 .join(DbDatasetImage, DbImage.id == DbDatasetImage.image_id)
                 .filter(DbDatasetImage.dataset_id == db_dataset.id)
-                .all()
-            ):
+            )
+            if target_batch_id is not None:
+                query = query.filter(DbImage.batch_id == target_batch_id)
+            for db_image in query.all():
                 img_path = (
                     UPLOADS_DIR / db_image.path.removeprefix("/uploads/")
                 ).resolve()
@@ -1149,7 +1166,7 @@ def prelabel_dataset(name: str):
         db.close()
 
     save_annotations(dir_name, annotations)
-    return {"dataset": name, "images": count}
+    return {"dataset": name, "batch": payload.get("batch") or None, "images": count}
 
 
 @app.post("/datasets/{name:path}/images/remove")
