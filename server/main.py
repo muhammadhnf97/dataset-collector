@@ -1262,7 +1262,6 @@ def get_dataset_images(name: str):
     if not dir_name:
         raise HTTPException(status_code=404, detail="Dataset not found")
     groups = {}
-    images = []
     seen = set()
     db = SessionLocal()
     try:
@@ -1284,10 +1283,9 @@ def get_dataset_images(name: str):
                 if db_image.path not in seen:
                     seen.add(db_image.path)
                     groups[stem].append(db_image.path)
-                    images.append(db_image.path)
     finally:
         db.close()
-    return {"dataset": name, "images": images, "groups": groups}
+    return {"dataset": name, "groups": groups}
 
 
 def annotations_file(dir_name: str):
@@ -1676,7 +1674,16 @@ def list_batch_covers():
 
 
 @app.get("/images")
-def list_images(batch: str | None = None, id: int | None = None):
+def list_images(
+    batch: str | None = None,
+    id: int | None = None,
+    page: int = 0,
+    limit: int = 50,
+):
+    page = max(0, page)
+    limit = max(1, min(500, limit))
+    offset = page * limit
+
     def _key_for_type(batch_type: str) -> str:
         if batch_type == "raw":
             return "imported"
@@ -1684,29 +1691,46 @@ def list_images(batch: str | None = None, id: int | None = None):
             return batch_type
         return "frames"
 
-    result = {"imported": [], "frames": [], "crops": []}
     db = SessionLocal()
     try:
         if id is not None:
+            base_query = db.query(DbImage).filter(DbImage.batch_id == id)
+            total = base_query.count()
             image_rows = (
-                db.query(DbImage)
-                .filter(DbImage.batch_id == id)
-                .order_by(DbImage.path)
+                base_query.order_by(DbImage.path)
+                .offset(offset)
+                .limit(limit)
                 .all()
             )
-            return {"images": [{"id": row.id, "path": row.path} for row in image_rows]}
+            return {
+                "images": [{"id": row.id, "path": row.path} for row in image_rows],
+                "total": total,
+                "page": page,
+                "limit": limit,
+            }
 
         if batch:
             batch_name = Path(batch).name
-            image_rows = (
+            base_query = (
                 db.query(DbImage)
                 .join(DbBatch)
                 .filter(DbBatch.name == batch_name)
-                .order_by(DbImage.path)
+            )
+            total = base_query.count()
+            image_rows = (
+                base_query.order_by(DbImage.path)
+                .offset(offset)
+                .limit(limit)
                 .all()
             )
-            return {"images": [row.path for row in image_rows]}
+            return {
+                "images": [row.path for row in image_rows],
+                "total": total,
+                "page": page,
+                "limit": limit,
+            }
 
+        result = {"imported": [], "frames": [], "crops": []}
         for row in db.query(DbImage).join(DbBatch).order_by(DbImage.path).all():
             key = _key_for_type(row.batch.type)
             result[key].append(row.path)

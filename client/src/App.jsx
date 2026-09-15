@@ -438,6 +438,7 @@ function App() {
   const [modalIndex, setModalIndex] = useState(null)
   const [datasetModalIndex, setDatasetModalIndex] = useState(null)
   const [imagePage, setImagePage] = useState(0)
+  const [rawImagesTotal, setRawImagesTotal] = useState(0)
 
   const [removeMode, setRemoveMode] = useState(false)
   const [removeIndex, setRemoveIndex] = useState(0)
@@ -530,14 +531,13 @@ function App() {
   }, [datasetBatchFilter, datasetImageGroups, datasetImages])
 
   const IMAGES_PER_PAGE = 50
+  const totalForPaging =
+    activePage === 'raw_image' ? rawImagesTotal : activeImages.length
   const pageCount = Math.max(
     1,
-    Math.ceil(activeImages.length / IMAGES_PER_PAGE),
+    Math.ceil(totalForPaging / IMAGES_PER_PAGE),
   )
-  const pageImages = activeImages.slice(
-    imagePage * IMAGES_PER_PAGE,
-    (imagePage + 1) * IMAGES_PER_PAGE,
-  )
+  const pageImages = activeImages
 
   const navigateModal = (delta) => {
     setModalIndex((i) =>
@@ -685,14 +685,14 @@ function App() {
     }
   }
 
-  const fetchRawImages = async (batchId) => {
+  const fetchRawImages = async (batchId, page = imagePage) => {
     try {
       const response = await fetch(
-        `/api/images?id=${encodeURIComponent(batchId)}`,
+        `/api/images?id=${encodeURIComponent(batchId)}&page=${page}&limit=${IMAGES_PER_PAGE}`,
       )
       const data = await response.json()
       setSelectedRawImages(data.images ?? [])
-      setImagePage(0)
+      setRawImagesTotal(data.total ?? data.images?.length ?? 0)
     } catch {
       setStatus('Failed: could not reach the server')
     }
@@ -760,7 +760,9 @@ function App() {
         setActiveDataset(data.name)
         setDatasetBatches(data.batches ?? [])
         setDatasetSplit(data.split ?? { train: 70, val: 20, test: 10 })
-        setDatasetImages(imagesData.images ?? [])
+        setDatasetImages(
+          Object.values(imagesData.groups ?? {}).flat(),
+        )
         setDatasetImageGroups(imagesData.groups ?? {})
         setDatasetAnnotations(annotData.annotations ?? {})
       } else {
@@ -841,7 +843,7 @@ function App() {
         ) + 1
       const filteredImages = batchFilter
         ? (images.groups[batchFilter] ?? [])
-        : images.images ?? []
+        : Object.values(images.groups ?? {}).flat()
       const annotations = annot.annotations ?? {}
       // Resume where you left off: start on the requested image, or the
       // first not-yet-annotated one, or the first image as a fallback.
@@ -898,7 +900,7 @@ function App() {
         Math.max(0, ...attributes.flatMap((g) => g.indices)) + 1
       const filteredImages = batchFilter
         ? (images.groups[batchFilter] ?? [])
-        : images.images ?? []
+        : Object.values(images.groups ?? {}).flat()
       const annotations = annot.annotations ?? {}
       setAttrAnnotate({
         dataset: name,
@@ -1598,6 +1600,18 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (selectedBatchId !== null) {
+      fetchRawImages(selectedBatchId, imagePage)
+    }
+  }, [selectedBatchId, imagePage])
+
+  useEffect(() => {
+    if (datasetBatches.length > 0 && !datasetBatches.includes(datasetBatchFilter)) {
+      setDatasetBatchFilter(datasetBatches[0])
+    }
+  }, [datasetBatches, datasetBatchFilter])
+
+  useEffect(() => {
     if (!annotate) return
     const handleKey = (e) => {
       if (!annotate.wizardMode) {
@@ -2146,7 +2160,6 @@ function App() {
                     setSelectedRaw(source)
                     setSelectedBatchId(id)
                     setImagePage(0)
-                    fetchRawImages(id)
                   }
                 }}
                 className={`group relative aspect-video w-40 shrink-0 overflow-hidden rounded-lg shadow-sm transition hover:shadow-md ${
@@ -2313,7 +2326,7 @@ function App() {
                     key={image.id ?? image}
                     type="button"
                     onClick={() =>
-                      setModalIndex(imagePage * IMAGES_PER_PAGE + index)
+                      setModalIndex(index)
                     }
                     className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
                   >
@@ -2341,7 +2354,7 @@ function App() {
                 ← Prev
               </button>
               <span className="text-sm text-slate-500">
-                Page {imagePage + 1} of {pageCount} · {activeImages.length}{' '}
+                Page {imagePage + 1} of {pageCount} · {totalForPaging}{' '}
                 images
               </span>
               <button
@@ -2516,15 +2529,10 @@ function App() {
                 </span>
                 {datasetBatches.length > 0 && (
                   <select
-                    value={datasetBatchFilter ?? ''}
-                    onChange={(e) =>
-                      setDatasetBatchFilter(
-                        e.target.value === '' ? null : e.target.value,
-                      )
-                    }
+                    value={datasetBatchFilter ?? datasetBatches[0] ?? ''}
+                    onChange={(e) => setDatasetBatchFilter(e.target.value)}
                     className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none"
                   >
-                    <option value="">All batches</option>
                     {datasetBatches.map((batch) => (
                       <option key={batch} value={batch}>
                         {batch}
@@ -2683,7 +2691,14 @@ function App() {
             <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100/80 px-4 py-3">
               <div className="flex items-center gap-3">
                 <span className="rounded-full bg-slate-200/80 px-3 py-1.5 text-sm font-medium text-slate-800">
-                  {attrAnnotate.dataset} · {attrAnnotate.imgIndex + 1} / {attrAnnotate.images.length}
+                  {attrAnnotate.dataset}
+                  {attrAnnotate.batchFilter && (
+                    <>
+                      {' · '}
+                      {attrAnnotate.batchFilter.replace(/_/g, '/')}
+                    </>
+                  )}
+                  {' · '}{attrAnnotate.imgIndex + 1} / {attrAnnotate.images.length}
                 </span>
                 <select
                   value={attrAnnotate.attrIndex}
