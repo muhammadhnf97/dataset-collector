@@ -394,9 +394,25 @@ function ArchiveIcon({ className }) {
   )
 }
 
+function formatRelativeTime(dateString) {
+  if (!dateString) return null
+  const then = new Date(dateString).getTime()
+  if (Number.isNaN(then)) return null
+  const seconds = Math.floor((Date.now() - then) / 1000)
+  if (seconds < 5) return 'just now'
+  if (seconds < 60) return `${seconds} sec${seconds === 1 ? '' : 's'} ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'} ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.floor(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'} ago`
+}
+
 function App() {
   const fileInputRef = useRef(null)
   const tarInputRef = useRef(null)
+  const [, setRelativeTimeTick] = useState(0)
   const [status, setStatus] = useState(null)
   const [videos, setVideos] = useState([])
   const [importedImages, setImportedImages] = useState([])
@@ -458,6 +474,7 @@ function App() {
   const [datasetImages, setDatasetImages] = useState([])
   const [datasetImageGroups, setDatasetImageGroups] = useState({})
   const [datasetAnnotations, setDatasetAnnotations] = useState({})
+  const [datasetAnnotationTimes, setDatasetAnnotationTimes] = useState({})
   const [datasetBatchFilter, setDatasetBatchFilter] = useState(null)
   const [showExportPanel, setShowExportPanel] = useState(false)
   const [datasetSettingsOpen, setDatasetSettingsOpen] = useState(false)
@@ -488,6 +505,12 @@ function App() {
   const [preLabeling, setPreLabeling] = useState(false)
   const [prelabelConfirmOpen, setPrelabelConfirmOpen] = useState(false)
   const [prelabelConfirmCount, setPrelabelConfirmCount] = useState(0)
+  const [prelabelWriteValues, setPrelabelWriteValues] = useState(true)
+  const [prelabelMenuOpen, setPrelabelMenuOpen] = useState(false)
+  const prelabelMenuRef = useRef(null)
+  const [prelabelStatsOpen, setPrelabelStatsOpen] = useState(false)
+  const [prelabelStats, setPrelabelStats] = useState(null)
+  const [prelabelStatsLoading, setPrelabelStatsLoading] = useState(false)
   const [exportFormat, setExportFormat] = useState('tar')
   const [selectedDataset, setSelectedDataset] = useState('')
   const [templates, setTemplates] = useState([])
@@ -765,6 +788,7 @@ function App() {
         )
         setDatasetImageGroups(imagesData.groups ?? {})
         setDatasetAnnotations(annotData.annotations ?? {})
+        setDatasetAnnotationTimes(annotData.updated_at ?? {})
       } else {
         setStatus(`Failed: ${data.detail ?? imagesData.detail ?? 'Unknown error'}`)
       }
@@ -1100,6 +1124,11 @@ function App() {
       setStatus(`Removed image (${data.deleted} deleted)`)
       setDatasetImages((prev) => prev.filter((s) => s !== image))
       setDatasetAnnotations((prev) => {
+        const next = { ...prev }
+        delete next[image]
+        return next
+      })
+      setDatasetAnnotationTimes((prev) => {
         const next = { ...prev }
         delete next[image]
         return next
@@ -1526,7 +1555,7 @@ function App() {
     }
   }
 
-  const runPrelabel = async () => {
+  const runPrelabel = async (writeValues = prelabelWriteValues) => {
     if (!activeDataset) return
     setPrelabelConfirmOpen(false)
     setPreLabeling(true)
@@ -1538,6 +1567,7 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             batch: datasetBatchFilter || '',
+            write_values: writeValues,
           }),
         },
       )
@@ -1546,7 +1576,11 @@ function App() {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
         return
       }
-      setStatus(`Pre-labeled ${data.images} images`)
+      setStatus(
+        writeValues
+          ? `Pre-labeled ${data.images} images`
+          : `Pre-labeled ${data.images} images (predictions only, values untouched)`,
+      )
       openDataset(activeDataset)
     } catch {
       setStatus('Failed: could not reach the server')
@@ -1555,16 +1589,40 @@ function App() {
     }
   }
 
-  const doPrelabel = () => {
+  const doPrelabel = (writeValues = true) => {
     if (!activeDataset) return
-    const existing = datasetActiveImages.filter(
-      (src) => datasetAnnotations[src] !== undefined,
-    )
-    if (existing.length > 0) {
-      setPrelabelConfirmCount(existing.length)
-      setPrelabelConfirmOpen(true)
-    } else {
-      runPrelabel()
+    setPrelabelWriteValues(writeValues)
+    if (writeValues) {
+      const existing = datasetActiveImages.filter(
+        (src) => datasetAnnotations[src] !== undefined,
+      )
+      if (existing.length > 0) {
+        setPrelabelConfirmCount(existing.length)
+        setPrelabelConfirmOpen(true)
+        return
+      }
+    }
+    runPrelabel(writeValues)
+  }
+
+  const fetchPrelabelStats = async () => {
+    if (!activeDataset) return
+    setPrelabelStatsLoading(true)
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/prelabel-stats`,
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setPrelabelStats(data)
+        setPrelabelStatsOpen(true)
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Could not load stats'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setPrelabelStatsLoading(false)
     }
   }
 
@@ -1593,6 +1651,22 @@ function App() {
   useEffect(() => {
     fetchBatches()
   }, [])
+
+  useEffect(() => {
+    const interval = setInterval(() => setRelativeTimeTick((t) => t + 1), 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    if (!prelabelMenuOpen) return
+    const handleClick = (e) => {
+      if (prelabelMenuRef.current && !prelabelMenuRef.current.contains(e.target)) {
+        setPrelabelMenuOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [prelabelMenuOpen])
 
   useEffect(() => {
     fetchDatasets()
@@ -2497,6 +2571,11 @@ function App() {
                       {d.framework ? `${d.framework}` : 'No framework'}
                       {d.framework && d.model ? ` / ${d.model}` : ''}
                     </p>
+                    {d.last_annotated_at && (
+                      <p className="truncate text-[10px] text-slate-300">
+                        Updated {formatRelativeTime(d.last_annotated_at)}
+                      </p>
+                    )}
                   </div>
                 </div>
               ))}
@@ -2553,13 +2632,75 @@ function App() {
                   </button>
                 )}
                 <div className="ml-auto flex items-center gap-2">
+                  <div ref={prelabelMenuRef} className="relative">
+                    <div className="flex overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
+                      <button
+                        type="button"
+                        onClick={() => doPrelabel(true)}
+                        disabled={!templatePath || preLabeling}
+                        title="Runs the model and overwrites both the corrected value and the pre-label prediction"
+                        className="px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+                      >
+                        {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPrelabelMenuOpen((v) => !v)}
+                        disabled={!templatePath || preLabeling}
+                        className="border-l border-indigo-300 px-2 text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+                      >
+                        <svg
+                          className={`h-4 w-4 transition-transform ${prelabelMenuOpen ? 'rotate-180' : ''}`}
+                          xmlns="http://www.w3.org/2000/svg"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          strokeWidth={2}
+                          stroke="currentColor"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                        </svg>
+                      </button>
+                    </div>
+                    {prelabelMenuOpen && (
+                      <div className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPrelabelMenuOpen(false)
+                            doPrelabel(true)
+                          }}
+                          disabled={!templatePath || preLabeling}
+                          className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50 disabled:opacity-40"
+                        >
+                          <span className="block font-medium">Pre-label</span>
+                          <span className="block text-xs text-slate-400">
+                            Overwrites value and pre-label
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPrelabelMenuOpen(false)
+                            doPrelabel(false)
+                          }}
+                          disabled={!templatePath || preLabeling}
+                          className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-sky-50 disabled:opacity-40"
+                        >
+                          <span className="block font-medium">Pre-label Only</span>
+                          <span className="block text-xs text-slate-400">
+                            Only updates the pre-label, keeps your value
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="button"
-                    onClick={doPrelabel}
-                    disabled={!templatePath || preLabeling}
-                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+                    onClick={fetchPrelabelStats}
+                    disabled={!templatePath || prelabelStatsLoading}
+                    className="rounded-full border border-amber-300 bg-amber-50 px-4 py-1.5 text-sm font-medium text-amber-600 transition hover:bg-amber-100 disabled:opacity-40"
                   >
-                    {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
+                    {prelabelStatsLoading ? 'Loading...' : 'Pre-label Stats'}
                   </button>
                   <button
                     type="button"
@@ -2626,6 +2767,9 @@ function App() {
                     <div className="grid grid-cols-6 gap-3">
                       {images.map((src) => {
                         const isAnnotated = datasetAnnotations[src] !== undefined
+                        const annotatedAgo = formatRelativeTime(
+                          datasetAnnotationTimes[src],
+                        )
                         return (
                           <button
                             key={src}
@@ -2643,8 +2787,13 @@ function App() {
                               className="aspect-video w-full object-cover"
                             />
                             {isAnnotated && (
-                              <span className="absolute right-1 top-1 flex h-5 items-center gap-1 rounded-full bg-emerald-500 px-2 text-[10px] font-bold text-white shadow">
+                              <span className="absolute right-1 top-1 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
                                 ✓ Annotated
+                                {annotatedAgo && (
+                                  <span className="font-normal opacity-90">
+                                    · {annotatedAgo}
+                                  </span>
+                                )}
                               </span>
                             )}
                           </button>
@@ -3251,9 +3400,71 @@ function App() {
               : `This dataset already has ${prelabelConfirmCount} annotated image${prelabelConfirmCount === 1 ? '' : 's'}. Running pre-label will overwrite them. Are you sure?`
           }
           onCancel={() => setPrelabelConfirmOpen(false)}
-          onConfirm={runPrelabel}
+          onConfirm={() => runPrelabel(true)}
           confirmLabel="Overwrite"
         />
+      )}
+
+      {prelabelStatsOpen && prelabelStats && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setPrelabelStatsOpen(false)}
+        >
+          <div
+            className="w-full max-w-4xl max-h-[80vh] overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 p-4">
+              <h3 className="text-lg font-semibold text-slate-800">
+                Pre-label stats for {prelabelStats.dataset}
+              </h3>
+              <p className="text-sm text-slate-500">
+                {prelabelStats.total} pre-labeled images
+              </p>
+            </div>
+            <div className="max-h-[60vh] overflow-auto p-4">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="border-b border-slate-200 text-slate-600">
+                    <th className="py-2 pr-4">Attribute</th>
+                    <th className="py-2 pr-4">Precision</th>
+                    <th className="py-2 pr-4">Recall</th>
+                    <th className="py-2 pr-4">Accuracy</th>
+                    <th className="py-2 pr-4 text-right">TP</th>
+                    <th className="py-2 pr-4 text-right">FP</th>
+                    <th className="py-2 pr-4 text-right">FN</th>
+                    <th className="py-2 pr-4 text-right">TN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {prelabelStats.attributes.map((attr) => (
+                    <tr key={attr.index} className="border-b border-slate-100">
+                      <td className="py-2 pr-4 font-medium text-slate-800">
+                        {attr.name}
+                      </td>
+                      <td className="py-2 pr-4">{(attr.precision * 100).toFixed(1)}%</td>
+                      <td className="py-2 pr-4">{(attr.recall * 100).toFixed(1)}%</td>
+                      <td className="py-2 pr-4">{(attr.accuracy * 100).toFixed(1)}%</td>
+                      <td className="py-2 pr-4 text-right">{attr.tp}</td>
+                      <td className="py-2 pr-4 text-right">{attr.fp}</td>
+                      <td className="py-2 pr-4 text-right">{attr.fn}</td>
+                      <td className="py-2 pr-4 text-right">{attr.tn}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="border-t border-slate-200 p-4 text-right">
+              <button
+                type="button"
+                onClick={() => setPrelabelStatsOpen(false)}
+                className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {showExportPanel && (

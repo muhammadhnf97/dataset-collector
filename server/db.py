@@ -94,6 +94,7 @@ class Annotation(Base, AuditMixin):
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=False)
     image_id = Column(Integer, ForeignKey("images.id"), nullable=False)
     values = Column(JSON, default=list)
+    pre_labels = Column(JSON, default=list)
 
     __table_args__ = (
         UniqueConstraint("dataset_id", "image_id", name="uq_annotation"),

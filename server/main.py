@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from sqlalchemy import func
 from sqlalchemy.dialects.sqlite import insert
 from db import (
     SessionLocal,
@@ -714,6 +715,7 @@ def _dataset_summary(name: str, entry: dict):
 
     batches = []
     previews = []
+    last_annotated_at = None
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
@@ -737,6 +739,14 @@ def _dataset_summary(name: str, entry: dict):
                     )
                     if first_image:
                         previews.append(first_image.path)
+
+            latest = (
+                db.query(func.max(DbAnnotation.updated_at))
+                .filter(DbAnnotation.dataset_id == db_dataset.id)
+                .scalar()
+            )
+            if latest:
+                last_annotated_at = latest.isoformat() + "Z"
     finally:
         db.close()
 
@@ -747,6 +757,7 @@ def _dataset_summary(name: str, entry: dict):
         "batches": batches,
         "previews": previews,
         "split": split,
+        "last_annotated_at": last_annotated_at,
     }
 
 
@@ -1136,7 +1147,13 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
         finally:
             db.close()
 
-    annotations = load_annotations(dir_name)
+    write_values = payload.get("write_values", True)
+
+    # Only images actually processed by this run get written. Do NOT reuse the
+    # full dataset-wide load_annotations() dict here — passing it to
+    # save_annotations/save_prelabels would re-write every batch's rows
+    # (bumping updated_at/updated_by) even though their content is unchanged.
+    processed = {}
     count = 0
     model_parts = _create_prelabel_predictor(model_dir)
     db = SessionLocal()
@@ -1160,13 +1177,20 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
                 ):
                     continue
                 values = _prelabel_image(img_path, model_parts)
-                annotations[db_image.path] = values
+                processed[db_image.path] = values
                 count += 1
     finally:
         db.close()
 
-    save_annotations(dir_name, annotations)
-    return {"dataset": name, "batch": payload.get("batch") or None, "images": count}
+    if write_values:
+        save_annotations(dir_name, processed)
+    save_prelabels(dir_name, processed)
+    return {
+        "dataset": name,
+        "batch": payload.get("batch") or None,
+        "images": count,
+        "write_values": write_values,
+    }
 
 
 @app.post("/datasets/{name:path}/images/remove")
@@ -1363,6 +1387,54 @@ def save_annotations(dir_name: str, data: dict, updated_by="system", updated_key
         db.close()
 
 
+def save_prelabels(dir_name: str, data: dict):
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(dir_name=dir_name).first()
+        if not db_dataset:
+            return
+
+        existing = {
+            a.image_id: a
+            for a in db.query(DbAnnotation).filter_by(dataset_id=db_dataset.id).all()
+        }
+        for img_path, values in data.items():
+            db_image = db.query(DbImage).filter_by(path=img_path).first()
+            if not db_image:
+                continue
+            ann = existing.get(db_image.id)
+            if ann is None:
+                ann = DbAnnotation(
+                    dataset_id=db_dataset.id,
+                    image_id=db_image.id,
+                )
+                db.add(ann)
+            ann.pre_labels = values
+        db.commit()
+    finally:
+        db.close()
+
+
+def load_annotation_times(dir_name: str):
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(dir_name=dir_name).first()
+        if not db_dataset:
+            return {}
+        result = {}
+        for path, updated_at in (
+            db.query(DbImage.path, DbAnnotation.updated_at)
+            .join(DbAnnotation, DbImage.id == DbAnnotation.image_id)
+            .filter(DbAnnotation.dataset_id == db_dataset.id)
+            .all()
+        ):
+            if updated_at:
+                result[path] = updated_at.isoformat() + "Z"
+        return result
+    finally:
+        db.close()
+
+
 @app.get("/datasets/{name}/annotations")
 def get_dataset_annotations(name: str):
     datasets = load_datasets()
@@ -1371,7 +1443,11 @@ def get_dataset_annotations(name: str):
     dir_name = datasets[name].get("dir")
     if not dir_name:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    return {"dataset": name, "annotations": load_annotations(dir_name)}
+    return {
+        "dataset": name,
+        "annotations": load_annotations(dir_name),
+        "updated_at": load_annotation_times(dir_name),
+    }
 
 
 @app.post("/datasets/{name}/annotations")
@@ -1410,6 +1486,95 @@ def set_dataset_annotation(name: str, payload: dict):
     finally:
         db.close()
     return {"dataset": name, "image": image, "values": values, "updated_by": "root"}
+
+
+def _attribute_labels(attributes, vector_length):
+    labels = [f"Attribute {i}" for i in range(vector_length)]
+    for group in attributes:
+        for pos, idx in enumerate(group.get("indices", [])):
+            if 0 <= idx < vector_length:
+                options = group.get("options", [])
+                labels[idx] = options[pos] if pos < len(options) else f"{group['name']} {pos}"
+    return labels
+
+
+@app.get("/datasets/{name}/prelabel-stats")
+def get_prelabel_stats(name: str):
+    name = unquote(name)
+    datasets = load_datasets()
+    if name not in datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    entry = datasets[name]
+    dir_name = entry.get("dir")
+    if not dir_name:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    framework = (entry.get("framework") or "").strip()
+    model = (entry.get("model") or "").strip()
+    if not framework or not model:
+        raise HTTPException(status_code=400, detail="Dataset framework/model not set")
+    config = load_template_config(_normalize_template_path(framework, model))
+    attributes = config.get("attributes", [])
+    vector_length = max(max(g.get("indices", [0]) or [0]) for g in attributes) + 1 if attributes else 26
+
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found in DB")
+
+        rows = (
+            db.query(DbAnnotation)
+            .filter(
+                DbAnnotation.dataset_id == db_dataset.id,
+                DbAnnotation.pre_labels != None,
+                DbAnnotation.pre_labels != [],
+            )
+            .all()
+        )
+
+        counts = [{"tp": 0, "fp": 0, "fn": 0, "tn": 0} for _ in range(vector_length)]
+        total = len(rows)
+        for ann in rows:
+            pre_vals = ann.pre_labels or []
+            val_vals = ann.values or []
+            for i in range(vector_length):
+                p = pre_vals[i] if i < len(pre_vals) else 0
+                v = val_vals[i] if i < len(val_vals) else 0
+                if p == 1 and v == 1:
+                    counts[i]["tp"] += 1
+                elif p == 1 and v == 0:
+                    counts[i]["fp"] += 1
+                elif p == 0 and v == 1:
+                    counts[i]["fn"] += 1
+                else:
+                    counts[i]["tn"] += 1
+
+        labels = _attribute_labels(attributes, vector_length)
+        stats = []
+        for i, c in enumerate(counts):
+            precision = c["tp"] / (c["tp"] + c["fp"]) if (c["tp"] + c["fp"]) > 0 else 0
+            recall = c["tp"] / (c["tp"] + c["fn"]) if (c["tp"] + c["fn"]) > 0 else 0
+            accuracy = (c["tp"] + c["tn"]) / total if total > 0 else 0
+            stats.append({
+                "index": i,
+                "name": labels[i],
+                "tp": c["tp"],
+                "fp": c["fp"],
+                "fn": c["fn"],
+                "tn": c["tn"],
+                "precision": round(precision, 4),
+                "recall": round(recall, 4),
+                "accuracy": round(accuracy, 4),
+            })
+
+        return {
+            "dataset": name,
+            "total": total,
+            "attributes": stats,
+        }
+    finally:
+        db.close()
 
 
 @app.post("/datasets/{name}/assign")
