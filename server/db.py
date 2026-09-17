@@ -19,7 +19,7 @@ DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
@@ -130,6 +130,12 @@ class Archive(Base, AuditMixin):
 
 
 def init_db():
+    # WAL lets readers proceed while a writer holds a transaction (e.g. a
+    # large upload committing thousands of images while a batch is deleted).
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        conn.exec_driver_sql("PRAGMA busy_timeout=30000")
+        conn.commit()
     # Rename legacy table before create_all so it isn't recreated empty.
     with engine.connect() as conn:
         tables = {

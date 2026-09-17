@@ -16,10 +16,11 @@ from urllib.parse import unquote
 import yaml
 from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.dialects.sqlite import insert
 from db import (
     SessionLocal,
@@ -280,24 +281,47 @@ def _process_uploaded_files(tmp_path: Path, source_id: int | None = None):
     batch_objs = {}
     db = SessionLocal()
 
-    try:
-        for item in sorted(tmp_path.rglob("*")):
-            if not item.is_file() or item.name.startswith("._"):
-                continue
-            rel = item.relative_to(tmp_path)
-            source_name = rel.parts[-2] if len(rel.parts) > 1 else ""
-            if source_name not in folders:
-                if source_name:
-                    batch_name = source_name
-                else:
-                    batch_name = next_batch_name(RAW_IMAGES_DIR)
-                batch_dir = RAW_IMAGES_DIR / batch_name
-                batch_dir.mkdir(parents=True, exist_ok=True)
-                folders[source_name] = {"batch_name": batch_name, "batch_dir": batch_dir, "index": 1}
-                batches.append(batch_name)
+    # A single top-level dir that only contains subdirs is a wrapper
+    # (e.g. "tracklets/CH0001/...") — strip it so batches take the next level.
+    files = [
+        item
+        for item in sorted(tmp_path.rglob("*"))
+        if item.is_file() and not item.name.startswith("._")
+    ]
+    top_dirs = {
+        item.relative_to(tmp_path).parts[0]
+        for item in files
+        if len(item.relative_to(tmp_path).parts) > 1
+    }
+    wrapper = None
+    if len(top_dirs) == 1:
+        only = next(iter(top_dirs))
+        has_direct_files = any(
+            len(item.relative_to(tmp_path).parts) == 2
+            for item in files
+            if item.relative_to(tmp_path).parts[0] == only
+        )
+        if not has_direct_files:
+            wrapper = only
 
+    try:
+        for item in files:
+            rel = item.relative_to(tmp_path)
+            parts = rel.parts
+            if wrapper and parts[0] == wrapper:
+                parts = parts[1:]
+            source_name = parts[0] if len(parts) > 1 else ""
             ext = item.suffix.lower()
             if ext in IMAGE_EXTENSIONS:
+                if source_name not in folders:
+                    if source_name:
+                        batch_name = source_name
+                    else:
+                        batch_name = next_batch_name(RAW_IMAGES_DIR)
+                    batch_dir = RAW_IMAGES_DIR / batch_name
+                    batch_dir.mkdir(parents=True, exist_ok=True)
+                    folders[source_name] = {"batch_name": batch_name, "batch_dir": batch_dir, "index": 1}
+                    batches.append(batch_name)
                 state = folders[source_name]
                 batch_name = state["batch_name"]
                 batch_dir = state["batch_dir"]
@@ -371,21 +395,27 @@ async def upload_image(
                     tar.extractall(tmp_path, filter="data")
             except tarfile.TarError:
                 raise HTTPException(status_code=400, detail="Invalid tar archive")
-            return _process_uploaded_files(tmp_path, source_id)
+            return await run_in_threadpool(
+                _process_uploaded_files, tmp_path, source_id
+            )
 
     if lowered.endswith(".zip"):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
+            extract_dir = tmp_path / "extracted"
+            extract_dir.mkdir()
             archive_path = tmp_path / "archive.zip"
             try:
                 file.file.seek(0)
                 with archive_path.open("wb") as archive:
                     shutil.copyfileobj(file.file, archive)
                 with zipfile.ZipFile(archive_path) as zf:
-                    zf.extractall(tmp_path)
+                    zf.extractall(extract_dir)
             except zipfile.BadZipFile:
                 raise HTTPException(status_code=400, detail="Invalid zip archive")
-            return _process_uploaded_files(tmp_path, source_id)
+            return await run_in_threadpool(
+                _process_uploaded_files, extract_dir, source_id
+            )
 
     if lowered.endswith(".rar"):
         try:
@@ -402,7 +432,9 @@ async def upload_image(
                     rf.extractall(tmp_path)
             except rarfile.Error:
                 raise HTTPException(status_code=400, detail="Invalid rar archive")
-            return _process_uploaded_files(tmp_path, source_id)
+            return await run_in_threadpool(
+                _process_uploaded_files, tmp_path, source_id
+            )
 
     ext = Path(filename).suffix.lower()
     if ext in IMAGE_EXTENSIONS:
@@ -1293,7 +1325,13 @@ def remove_dataset_batch(name: str, batch: str):
 
 
 @app.get("/datasets/{name:path}/images")
-def get_dataset_images(name: str):
+def get_dataset_images(
+    name: str,
+    batch: str | None = None,
+    page: int = 0,
+    limit: int = 200,
+    counts: bool = False,
+):
     name = unquote(name)
     datasets = load_datasets()
     if name not in datasets:
@@ -1302,32 +1340,99 @@ def get_dataset_images(name: str):
     dir_name = entry.get("dir")
     if not dir_name:
         raise HTTPException(status_code=404, detail="Dataset not found")
-    groups = {}
-    seen = set()
-    batch_sources = {}
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
-        if db_dataset:
-            for row in (
-                db.query(DbImage, DbBatch)
+        if not db_dataset:
+            return {
+                "dataset": name,
+                "groups": {},
+                "batch_sources": {},
+                "counts": {},
+            }
+
+        if counts:
+            rows = (
+                db.query(
+                    DbBatch,
+                    func.count(DbImage.id.distinct()),
+                    func.count(DbAnnotation.id.distinct()),
+                )
+                .join(DbImage, DbImage.batch_id == DbBatch.id)
+                .join(DbDatasetImage, DbImage.id == DbDatasetImage.image_id)
+                .outerjoin(
+                    DbAnnotation,
+                    and_(
+                        DbAnnotation.image_id == DbImage.id,
+                        DbAnnotation.dataset_id == db_dataset.id,
+                    ),
+                )
+                .filter(DbDatasetImage.dataset_id == db_dataset.id)
+                .group_by(DbBatch.id)
+                .order_by(DbBatch.name)
+                .all()
+            )
+            counts_out = {}
+            batch_sources = {}
+            for db_batch, total, annotated in rows:
+                stem = f"raw-images_{db_batch.name}"
+                counts_out[stem] = {"total": total, "annotated": annotated}
+                src = _source_dict(db_batch.source_ref)
+                if src:
+                    batch_sources[stem] = src
+            return {
+                "dataset": name,
+                "counts": counts_out,
+                "batch_sources": batch_sources,
+            }
+
+        if batch is not None:
+            batch_name = Path(unquote(batch)).name
+            base_query = (
+                db.query(DbImage)
                 .join(DbBatch, DbImage.batch_id == DbBatch.id)
                 .join(DbDatasetImage, DbImage.id == DbDatasetImage.image_id)
                 .filter(DbDatasetImage.dataset_id == db_dataset.id)
-                .order_by(DbImage.path)
-                .all()
-            ):
-                db_image, db_batch = row
-                display = f"raw-images/{db_batch.name}"
-                stem = display.replace("/", "_")
-                if stem not in groups:
-                    groups[stem] = []
-                    src = _source_dict(db_batch.source_ref)
-                    if src:
-                        batch_sources[stem] = src
-                if db_image.path not in seen:
-                    seen.add(db_image.path)
-                    groups[stem].append(db_image.path)
+                .filter(DbBatch.name == batch_name)
+            )
+            total = base_query.count()
+            page = max(0, page)
+            limit = max(0, min(5000, limit))
+            query = base_query.order_by(DbImage.path)
+            if limit:
+                query = query.offset(page * limit).limit(limit)
+            image_rows = query.all()
+            return {
+                "dataset": name,
+                "batch": f"raw-images_{batch_name}",
+                "images": [row.path for row in image_rows],
+                "total": total,
+                "page": page,
+                "limit": limit,
+            }
+
+        groups = {}
+        seen = set()
+        batch_sources = {}
+        for row in (
+            db.query(DbImage, DbBatch)
+            .join(DbBatch, DbImage.batch_id == DbBatch.id)
+            .join(DbDatasetImage, DbImage.id == DbDatasetImage.image_id)
+            .filter(DbDatasetImage.dataset_id == db_dataset.id)
+            .order_by(DbImage.path)
+            .all()
+        ):
+            db_image, db_batch = row
+            display = f"raw-images/{db_batch.name}"
+            stem = display.replace("/", "_")
+            if stem not in groups:
+                groups[stem] = []
+                src = _source_dict(db_batch.source_ref)
+                if src:
+                    batch_sources[stem] = src
+            if db_image.path not in seen:
+                seen.add(db_image.path)
+                groups[stem].append(db_image.path)
     finally:
         db.close()
     return {

@@ -98,7 +98,7 @@ function Filmstrip({ images, index, marked, onSelect }) {
   )
 }
 
-function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) {
+function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, attributes, annotations }) {
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === 'Escape') onClose()
@@ -181,6 +181,51 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove }) 
       <span className="absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full border border-slate-300 bg-slate-200 px-4 py-1.5 text-sm font-medium text-slate-800 backdrop-blur-md">
         {index + 1} / {images.length}
       </span>
+
+      {attributes && (
+        <div className="absolute bottom-5 left-4 z-10 max-h-56 w-64 overflow-y-auto rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs shadow backdrop-blur-md">
+          {(() => {
+            const current = images[index].path ?? images[index]
+            const values = annotations?.[current]
+            if (!values) {
+              return (
+                <p className="flex items-center gap-1.5 py-1 text-slate-400">
+                  <span className="inline-block h-2 w-2 rounded-full bg-red-400" />
+                  Not annotated
+                </p>
+              )
+            }
+            return attributes.map((group) => {
+              const selected = (group.options ?? []).filter(
+                (_, i) => values[group.indices[i]] === 1,
+              )
+              const hasValue = selected.length > 0
+              return (
+                <div
+                  key={group.name}
+                  className="flex items-center gap-1.5 py-0.5 leading-relaxed"
+                >
+                  <span
+                    className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                      hasValue ? 'bg-emerald-500' : 'bg-red-400'
+                    }`}
+                  />
+                  <span className="font-semibold text-slate-500">
+                    {group.name}
+                  </span>{' '}
+                  <span
+                    className={`font-medium ${
+                      hasValue ? 'text-slate-800' : 'text-slate-400'
+                    }`}
+                  >
+                    {hasValue ? selected.join(', ') : '—'}
+                  </span>
+                </div>
+              )
+            })
+          })()}
+        </div>
+      )}
     </div>
     </div>
   )
@@ -413,6 +458,120 @@ function formatRelativeTime(dateString) {
   return `${days} day${days === 1 ? '' : 's'} ago`
 }
 
+const DATASET_PAGE_LIMIT = 200
+
+function DatasetBatchSection({
+  dataset,
+  stem,
+  source,
+  stats,
+  images,
+  annotations,
+  annotationTimes,
+  refreshKey,
+  onImagesLoaded,
+  onOpenImage,
+}) {
+  const [loading, setLoading] = useState(false)
+  const [loadedCount, setLoadedCount] = useState(0)
+  const batchName = stem.replace(/^raw-images_/, '')
+  const total = stats?.total ?? 0
+  const annotated = stats?.annotated ?? 0
+  const hasMore = loadedCount < total
+
+  const loadPage = async (page, replace) => {
+    setLoading(true)
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(dataset)}/images?batch=${encodeURIComponent(batchName)}&page=${page}&limit=${DATASET_PAGE_LIMIT}`,
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setLoadedCount(
+          replace ? data.images.length : loadedCount + data.images.length,
+        )
+        onImagesLoaded(stem, data.images, replace)
+      }
+    } catch {
+      // leave existing images; user can retry with Load more
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    setLoadedCount(0)
+    loadPage(0, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset, stem, refreshKey])
+
+  return (
+    <div className="mt-4">
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
+        {stem}
+        {source && (
+          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-600">
+            {source.name} · v{source.version}
+          </span>
+        )}
+        <span className="text-xs font-normal text-slate-400">
+          {annotated} / {total} annotated
+        </span>
+      </h3>
+      {loadedCount === 0 && loading ? (
+        <p className="text-xs text-slate-400">Loading images...</p>
+      ) : (
+        <div className="grid grid-cols-6 gap-3">
+          {images.map((src) => {
+            const isAnnotated = annotations[src] !== undefined
+            const annotatedAgo = formatRelativeTime(annotationTimes[src])
+            return (
+              <button
+                key={src}
+                type="button"
+                onClick={() => onOpenImage(src)}
+                className={`relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
+                  isAnnotated ? 'ring-2 ring-emerald-500' : ''
+                }`}
+              >
+                <img
+                  src={`/api${src}`}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="aspect-video w-full object-cover"
+                />
+                {isAnnotated && (
+                  <span className="absolute right-1 top-1 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                    ✓ Annotated
+                    {annotatedAgo && (
+                      <span className="font-normal opacity-90">
+                        · {annotatedAgo}
+                      </span>
+                    )}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {hasMore && (
+        <button
+          type="button"
+          onClick={() => loadPage(Math.floor(loadedCount / DATASET_PAGE_LIMIT), false)}
+          disabled={loading}
+          className="mt-3 rounded-lg border border-slate-300 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
+        >
+          {loading
+            ? 'Loading...'
+            : `Load more (${loadedCount} / ${total})`}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function App() {
   const fileInputRef = useRef(null)
   const tarInputRef = useRef(null)
@@ -476,7 +635,6 @@ function App() {
   const [activePage, setActivePage] = useState('raw_image')
   const [activeDataset, setActiveDataset] = useState('')
   const [datasetBatches, setDatasetBatches] = useState([])
-  const [datasetImages, setDatasetImages] = useState([])
   const [datasetImageGroups, setDatasetImageGroups] = useState({})
   const [datasetAnnotations, setDatasetAnnotations] = useState({})
   const [datasetAnnotationTimes, setDatasetAnnotationTimes] = useState({})
@@ -505,6 +663,7 @@ function App() {
   const [assignToDatasetBatch, setAssignToDatasetBatch] = useState('')
   const [importBatchOpen, setImportBatchOpen] = useState(false)
   const [availableBatches, setAvailableBatches] = useState([])
+  const [importSourceFilter, setImportSourceFilter] = useState('')
   const [selectedImportBatches, setSelectedImportBatches] = useState(new Set())
   const [importingBatch, setImportingBatch] = useState(false)
   const [preLabeling, setPreLabeling] = useState(false)
@@ -536,6 +695,9 @@ function App() {
   const [uploadSourceId, setUploadSourceId] = useState('')
   const [uploadSourceOpen, setUploadSourceOpen] = useState(false)
   const [datasetBatchSources, setDatasetBatchSources] = useState({})
+  const [datasetBatchStats, setDatasetBatchStats] = useState({})
+  const [datasetRefreshKey, setDatasetRefreshKey] = useState(0)
+  const [datasetAttributes, setDatasetAttributes] = useState(null)
   const [selectedDataset, setSelectedDataset] = useState('')
   const [templates, setTemplates] = useState([])
   const [annotate, setAnnotate] = useState(null)
@@ -604,11 +766,64 @@ function App() {
     [rawSources, selectedRaw],
   )
 
+  const importSources = useMemo(() => {
+    const map = {}
+    for (const b of availableBatches) {
+      const s = b.source
+      const key = s ? `s-${s.id}` : 'none'
+      if (!map[key]) {
+        map[key] = {
+          key,
+          id: s?.id ?? null,
+          label: s ? `${s.name} · v${s.version}` : 'Untagged',
+          count: 0,
+        }
+      }
+      map[key].count++
+    }
+    return Object.values(map).sort((a, b) => {
+      if (a.key === 'none') return 1
+      if (b.key === 'none') return -1
+      return a.label.localeCompare(b.label)
+    })
+  }, [availableBatches])
+
+  const importFilteredBatches = useMemo(() => {
+    if (!importSourceFilter) return availableBatches
+    return availableBatches.filter((b) =>
+      importSourceFilter === 'none'
+        ? !b.source
+        : b.source?.id === Number(importSourceFilter),
+    )
+  }, [availableBatches, importSourceFilter])
+
+  const datasetImages = useMemo(
+    () => datasetBatches.flatMap((stem) => datasetImageGroups[stem] ?? []),
+    [datasetBatches, datasetImageGroups],
+  )
+
+  const datasetTotals = useMemo(() => {
+    let total = 0
+    let annotated = 0
+    for (const c of Object.values(datasetBatchStats)) {
+      total += c.total
+      annotated += c.annotated
+    }
+    return { total, annotated }
+  }, [datasetBatchStats])
+
   const datasetActiveImages = useMemo(() => {
     return datasetBatchFilter
       ? (datasetImageGroups[datasetBatchFilter] ?? [])
       : datasetImages
   }, [datasetBatchFilter, datasetImageGroups, datasetImages])
+
+  const handleDatasetImagesLoaded = (stem, images, replace) => {
+    setDatasetImageGroups((prev) => ({
+      ...prev,
+      [stem]: replace ? images : [...(prev[stem] ?? []), ...images],
+    }))
+  }
 
   const IMAGES_PER_PAGE = 50
   const totalForPaging =
@@ -890,7 +1105,7 @@ function App() {
     try {
       const [datasetRes, imagesRes, annotRes] = await Promise.all([
         fetch(`/api/datasets/${encodeURIComponent(name)}`),
-        fetch(`/api/datasets/${encodeURIComponent(name)}/images`),
+        fetch(`/api/datasets/${encodeURIComponent(name)}/images?counts=1`),
         fetch(`/api/datasets/${encodeURIComponent(name)}/annotations`),
       ])
       const data = await datasetRes.json()
@@ -900,13 +1115,21 @@ function App() {
         setActiveDataset(data.name)
         setDatasetBatches(data.batches ?? [])
         setDatasetSplit(data.split ?? { train: 70, val: 20, test: 10 })
-        setDatasetImages(
-          Object.values(imagesData.groups ?? {}).flat(),
-        )
-        setDatasetImageGroups(imagesData.groups ?? {})
+        setDatasetImageGroups({})
+        setDatasetBatchStats(imagesData.counts ?? {})
         setDatasetBatchSources(imagesData.batch_sources ?? {})
         setDatasetAnnotations(annotData.annotations ?? {})
         setDatasetAnnotationTimes(annotData.updated_at ?? {})
+        setDatasetRefreshKey((k) => k + 1)
+        if (data.framework && data.model) {
+          const tpl = `${data.framework}/${data.model}`.toLowerCase()
+          fetch(`/api/templates/${encodeURIComponent(tpl)}/attributes`)
+            .then((r) => r.json())
+            .then((d) => setDatasetAttributes(d.attributes ?? []))
+            .catch(() => setDatasetAttributes([]))
+        } else {
+          setDatasetAttributes([])
+        }
       } else {
         setStatus(`Failed: ${data.detail ?? imagesData.detail ?? 'Unknown error'}`)
       }
@@ -965,8 +1188,11 @@ function App() {
       return
     }
     try {
+      const imagesUrl = batchFilter
+        ? `/api/datasets/${encodeURIComponent(name)}/images?batch=${encodeURIComponent(batchFilter.replace(/^raw-images_/, ''))}&limit=0`
+        : `/api/datasets/${encodeURIComponent(name)}/images`
       const [imagesRes, attrsRes, annotRes] = await Promise.all([
-        fetch(`/api/datasets/${encodeURIComponent(name)}/images`),
+        fetch(imagesUrl),
         fetch(`/api/templates/${encodeURIComponent(templateName)}/attributes`),
         fetch(`/api/datasets/${encodeURIComponent(name)}/annotations`),
       ])
@@ -984,7 +1210,7 @@ function App() {
           ...attributes.flatMap((g) => g.indices),
         ) + 1
       const filteredImages = batchFilter
-        ? (images.groups[batchFilter] ?? [])
+        ? (images.images ?? [])
         : Object.values(images.groups ?? {}).flat()
       const annotations = annot.annotations ?? {}
       // Resume where you left off: start on the requested image, or the
@@ -1025,8 +1251,11 @@ function App() {
       return
     }
     try {
+      const imagesUrl = batchFilter
+        ? `/api/datasets/${encodeURIComponent(name)}/images?batch=${encodeURIComponent(batchFilter.replace(/^raw-images_/, ''))}&limit=0`
+        : `/api/datasets/${encodeURIComponent(name)}/images`
       const [imagesRes, attrsRes, annotRes] = await Promise.all([
-        fetch(`/api/datasets/${encodeURIComponent(name)}/images`),
+        fetch(imagesUrl),
         fetch(`/api/templates/${encodeURIComponent(templateName)}/attributes`),
         fetch(`/api/datasets/${encodeURIComponent(name)}/annotations`),
       ])
@@ -1041,7 +1270,7 @@ function App() {
       const length =
         Math.max(0, ...attributes.flatMap((g) => g.indices)) + 1
       const filteredImages = batchFilter
-        ? (images.groups[batchFilter] ?? [])
+        ? (images.images ?? [])
         : Object.values(images.groups ?? {}).flat()
       const annotations = annot.annotations ?? {}
       setAttrAnnotate({
@@ -1240,7 +1469,26 @@ function App() {
         return
       }
       setStatus(`Removed image (${data.deleted} deleted)`)
-      setDatasetImages((prev) => prev.filter((s) => s !== image))
+      const wasAnnotated = datasetAnnotations[image] !== undefined
+      setDatasetImageGroups((prev) => {
+        const next = {}
+        for (const [k, v] of Object.entries(prev)) {
+          next[k] = v.filter((s) => s !== image)
+        }
+        return next
+      })
+      setDatasetBatchStats((prev) => {
+        const stem = `raw-images_${image.split('/').slice(-2, -1)[0]}`
+        const cur = prev[stem]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [stem]: {
+            total: Math.max(0, cur.total - 1),
+            annotated: Math.max(0, cur.annotated - (wasAnnotated ? 1 : 0)),
+          },
+        }
+      })
       setDatasetAnnotations((prev) => {
         const next = { ...prev }
         delete next[image]
@@ -1582,6 +1830,7 @@ function App() {
 
   const openImportBatch = async () => {
     setImportBatchOpen(true)
+    setImportSourceFilter('')
     setSelectedImportBatches(new Set())
     try {
       const response = await fetch('/api/batches/covers')
@@ -1840,11 +2089,11 @@ function App() {
     if (!activeDataset) return
     setPrelabelWriteValues(writeValues)
     if (writeValues) {
-      const existing = datasetActiveImages.filter(
-        (src) => datasetAnnotations[src] !== undefined,
-      )
-      if (existing.length > 0) {
-        setPrelabelConfirmCount(existing.length)
+      const existingCount = datasetBatchFilter
+        ? (datasetBatchStats[datasetBatchFilter]?.annotated ?? 0)
+        : datasetTotals.annotated
+      if (existingCount > 0) {
+        setPrelabelConfirmCount(existingCount)
         setPrelabelConfirmOpen(true)
         return
       }
@@ -2973,15 +3222,9 @@ function App() {
           )}
 
           {activeDataset && (() => {
-            const filteredImages = datasetBatchFilter
-              ? (datasetImageGroups[datasetBatchFilter] ?? [])
-              : datasetImages
-            const groups = datasetBatchFilter
-              ? { [datasetBatchFilter]: filteredImages }
-              : datasetImageGroups
-            const annotatedCount = datasetImages.filter(
-              (src) => datasetAnnotations[src] !== undefined,
-            ).length
+            const visibleStems = datasetBatchFilter
+              ? [datasetBatchFilter]
+              : datasetBatches
             const currentDataset = datasets.find((d) => d.name === activeDataset)
             const templatePath =
               currentDataset?.framework && currentDataset?.model
@@ -2994,7 +3237,7 @@ function App() {
                   {activeDataset}
                 </h2>
                 <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                  {annotatedCount} / {datasetImages.length} annotated
+                  {datasetTotals.annotated} / {datasetTotals.total} annotated
                 </span>
                 <div className="ml-auto flex items-center gap-2">
                   <button
@@ -3109,12 +3352,10 @@ function App() {
                     ))}
                   </select>
                   <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                    {
-                      filteredImages.filter(
-                        (src) => datasetAnnotations[src] !== undefined,
-                      ).length
-                    }{' '}
-                    / {filteredImages.length} annotated
+                    {(datasetBatchStats[datasetBatchFilter]?.annotated ??
+                      0)}{' '}
+                    / {datasetBatchStats[datasetBatchFilter]?.total ?? 0}{' '}
+                    annotated
                   </span>
                   <div className="ml-auto flex items-center gap-2">
                     <div ref={prelabelMenuRef} className="relative">
@@ -3204,59 +3445,27 @@ function App() {
               )}
 
               <div className="px-6 py-5">
-              {Object.keys(groups).length === 0 ? (
+              {visibleStems.length === 0 ? (
                 <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
                   No images in this dataset
                 </div>
               ) : (
-                Object.entries(groups).map(([batch, images]) => (
-                  <div key={batch} className="mt-4">
-                    <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
-                      {batch}
-                      {datasetBatchSources[batch] && (
-                        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-600">
-                          {datasetBatchSources[batch].name} · v
-                          {datasetBatchSources[batch].version}
-                        </span>
-                      )}
-                    </h3>
-                    <div className="grid grid-cols-6 gap-3">
-                      {images.map((src) => {
-                        const isAnnotated = datasetAnnotations[src] !== undefined
-                        const annotatedAgo = formatRelativeTime(
-                          datasetAnnotationTimes[src],
-                        )
-                        return (
-                          <button
-                            key={src}
-                            type="button"
-                            onClick={() =>
-                              setDatasetModalIndex(datasetActiveImages.indexOf(src))
-                            }
-                            className={`relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
-                              isAnnotated ? 'ring-2 ring-emerald-500' : ''
-                            }`}
-                          >
-                            <img
-                              src={`/api${src}`}
-                              alt=""
-                              className="aspect-video w-full object-cover"
-                            />
-                            {isAnnotated && (
-                              <span className="absolute right-1 top-1 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                                ✓ Annotated
-                                {annotatedAgo && (
-                                  <span className="font-normal opacity-90">
-                                    · {annotatedAgo}
-                                  </span>
-                                )}
-                              </span>
-                            )}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
+                visibleStems.map((stem) => (
+                  <DatasetBatchSection
+                    key={`${stem}-${datasetRefreshKey}`}
+                    dataset={activeDataset}
+                    stem={stem}
+                    source={datasetBatchSources[stem]}
+                    stats={datasetBatchStats[stem]}
+                    images={datasetImageGroups[stem] ?? []}
+                    annotations={datasetAnnotations}
+                    annotationTimes={datasetAnnotationTimes}
+                    refreshKey={datasetRefreshKey}
+                    onImagesLoaded={handleDatasetImagesLoaded}
+                    onOpenImage={(src) =>
+                      setDatasetModalIndex(datasetActiveImages.indexOf(src))
+                    }
+                  />
                 ))
               )}
               </div>
@@ -3354,6 +3563,8 @@ function App() {
         onClose={() => setDatasetModalIndex(null)}
         onNavigate={navigateDatasetModal}
         onSelect={setDatasetModalIndex}
+        attributes={datasetAttributes}
+        annotations={datasetAnnotations}
       />
 
       {attrAnnotate && (
@@ -3884,7 +4095,10 @@ function App() {
 
       {confirmingRemoveDatasetBatch && (
         <ConfirmModal
-          count={(datasetImageGroups[datasetBatchToRemove] ?? []).length}
+          count={
+            datasetBatchStats[datasetBatchToRemove]?.total ??
+            (datasetImageGroups[datasetBatchToRemove] ?? []).length
+          }
           title={`Remove ${datasetBatchToRemove}?`}
           message="This removes all images in this batch from the dataset. The original files will not be deleted."
           onCancel={() => setConfirmingRemoveDatasetBatch(false)}
@@ -3894,7 +4108,7 @@ function App() {
 
       {confirmingRemoveActiveDataset && (
         <ConfirmModal
-          count={datasetImages.length}
+          count={datasetTotals.total}
           title={`Remove ${activeDataset}?`}
           message="This will remove the dataset and its annotations. Batches and images will remain in Raw Image. This action cannot be undone."
           onCancel={() => setConfirmingRemoveActiveDataset(false)}
@@ -4241,14 +4455,54 @@ function App() {
           >
             <h3 className="text-lg font-semibold text-slate-800">Import Batch</h3>
             <p className="mt-1 text-sm text-slate-500">
-              Pick raw-image or video batches to import into {activeDataset}.
+              Pick a source, then batches to import into {activeDataset}.
             </p>
+            {importSources.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setImportSourceFilter('')}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                    importSourceFilter === ''
+                      ? 'bg-indigo-500 text-white shadow'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  All · {availableBatches.length}
+                </button>
+                {importSources.map((s) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() =>
+                      setImportSourceFilter(
+                        s.id === null ? 'none' : String(s.id),
+                      )
+                    }
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                      importSourceFilter ===
+                      (s.id === null ? 'none' : String(s.id))
+                        ? 'bg-indigo-500 text-white shadow'
+                        : s.key === 'none'
+                          ? 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                          : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                    }`}
+                  >
+                    {s.label} · {s.count}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="mt-4">
-              {availableBatches.length === 0 ? (
-                <p className="text-sm text-slate-500">No batches available.</p>
+              {importFilteredBatches.length === 0 ? (
+                <p className="text-sm text-slate-500">
+                  {availableBatches.length === 0
+                    ? 'No batches available.'
+                    : 'No batches for this source.'}
+                </p>
               ) : (
                 <div className="grid max-h-96 grid-cols-4 gap-3 overflow-y-auto p-1">
-                  {availableBatches.map((batch) => {
+                  {importFilteredBatches.map((batch) => {
                     const selected = batch.id && selectedImportBatches.has(batch.id)
                     const imported = datasetBatches.includes(
                       batch.name.replace(/\//g, '_'),
@@ -4297,10 +4551,13 @@ function App() {
                             ✓
                           </div>
                         )}
-                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 text-left">
+                        <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-1 bg-black/60 px-2 py-1">
                           <p className="truncate text-[10px] font-medium text-white">
                             {batch.name}
                           </p>
+                          <span className="shrink-0 text-[10px] text-white/70">
+                            {batch.count ?? 0}
+                          </span>
                         </div>
                       </button>
                     )
@@ -4401,7 +4658,7 @@ function App() {
                     >
                       <span className="font-medium text-slate-700">{batch}</span>
                       <span className="text-xs text-slate-400">
-                        {(datasetImageGroups[batch] ?? []).length} images
+                        {datasetBatchStats[batch]?.total ?? 0} images
                       </span>
                       <button
                         type="button"
