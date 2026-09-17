@@ -533,8 +533,8 @@ function App() {
   const [sources, setSources] = useState([])
   const [sourceModalOpen, setSourceModalOpen] = useState(false)
   const [newSourceName, setNewSourceName] = useState('')
-  const [sourceFilter, setSourceFilter] = useState('')
   const [uploadSourceId, setUploadSourceId] = useState('')
+  const [uploadSourceOpen, setUploadSourceOpen] = useState(false)
   const [datasetBatchSources, setDatasetBatchSources] = useState({})
   const [selectedDataset, setSelectedDataset] = useState('')
   const [templates, setTemplates] = useState([])
@@ -566,16 +566,43 @@ function App() {
           source,
           batch: b.name,
           previews: b.cover ? [b.cover] : [],
+          count: b.count,
+          type: b.type,
           sourceInfo: b.source && typeof b.source === 'object' ? b.source : null,
         }
       })
-      .filter((r) => {
-        if (!sourceFilter) return true
-        if (sourceFilter === 'none') return !r.sourceInfo
-        return r.sourceInfo?.id === Number(sourceFilter)
-      })
       .sort((a, b) => a.source.localeCompare(b.source))
-  }, [batches, sourceFilter])
+  }, [batches])
+
+  const rawSourceGroups = useMemo(() => {
+    const groups = []
+    const byKey = {}
+    for (const r of rawSources) {
+      const key = r.sourceInfo ? `s-${r.sourceInfo.id}` : 'untagged'
+      if (!byKey[key]) {
+        byKey[key] = {
+          key,
+          label: r.sourceInfo
+            ? `${r.sourceInfo.name} · v${r.sourceInfo.version}`
+            : 'Untagged',
+          items: [],
+        }
+        groups.push(byKey[key])
+      }
+      byKey[key].items.push(r)
+    }
+    groups.sort((a, b) => {
+      if (a.key === 'untagged') return 1
+      if (b.key === 'untagged') return -1
+      return a.label.localeCompare(b.label)
+    })
+    return groups
+  }, [rawSources])
+
+  const selectedRawInfo = useMemo(
+    () => rawSources.find((r) => r.source === selectedRaw) ?? null,
+    [rawSources, selectedRaw],
+  )
 
   const datasetActiveImages = useMemo(() => {
     return datasetBatchFilter
@@ -785,13 +812,14 @@ function App() {
       if (response.ok) {
         setNewSourceName('')
         setStatus(`Created source ${data.name} · v${data.version}`)
-        fetchSources()
-      } else {
-        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        await fetchSources()
+        return data
       }
+      setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
     } catch {
       setStatus('Failed: could not reach the server')
     }
+    return null
   }
 
   const deleteSource = async (id) => {
@@ -805,30 +833,6 @@ function App() {
         fetchBatches()
       } else {
         const data = await response.json()
-        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
-      }
-    } catch {
-      setStatus('Failed: could not reach the server')
-    }
-  }
-
-  const assignBatchSource = async (batchId, sourceId) => {
-    try {
-      const response = await fetch(`/api/batches/${batchId}/source`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_id: sourceId }),
-      })
-      const data = await response.json()
-      if (response.ok) {
-        setStatus(
-          data.source
-            ? `Batch ${data.batch} → ${data.source.name} · v${data.source.version}`
-            : `Batch ${data.batch} untagged`,
-        )
-        fetchBatches()
-        fetchSources()
-      } else {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
       }
     } catch {
@@ -2433,20 +2437,6 @@ function App() {
             <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
               {rawSources.length}
             </span>
-            <select
-              value={sourceFilter}
-              onChange={(e) => setSourceFilter(e.target.value)}
-              className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 outline-none"
-              title="Filter batches by source"
-            >
-              <option value="">All sources</option>
-              <option value="none">Untagged</option>
-              {sources.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} · v{s.version}
-                </option>
-              ))}
-            </select>
             <input
               ref={tarInputRef}
               type="file"
@@ -2454,31 +2444,18 @@ function App() {
               className="hidden"
               onChange={handleImageChange}
             />
-            <select
-              value={uploadSourceId}
-              onChange={(e) => setUploadSourceId(e.target.value)}
-              className="ml-auto rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-600 outline-none"
-              title="Tag uploaded batches with this source"
-            >
-              <option value="">Upload: no source</option>
-              {sources.map((s) => (
-                <option key={s.id} value={s.id}>
-                  Upload → {s.name} · v{s.version}
-                </option>
-              ))}
-            </select>
             <button
               type="button"
               disabled={removeRawMode}
               onClick={() => setSourceModalOpen(true)}
-              className="flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:opacity-40"
+              className="ml-auto flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:opacity-40"
             >
               Sources
             </button>
             <button
               type="button"
               disabled={removeRawMode}
-              onClick={() => tarInputRef.current?.click()}
+              onClick={() => setUploadSourceOpen(true)}
               className="flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ArchiveIcon className="h-4 w-4" />
@@ -2532,8 +2509,27 @@ function App() {
               )
             ) : null}
           </div>
-          <div className="mt-4 flex max-w-full gap-3 overflow-x-auto overscroll-x-contain p-3">
-            {rawSources.map(({ id, source, batch, previews, sourceInfo }) => (
+          <div className="mt-4 max-w-full space-y-4">
+            {rawSourceGroups.map((group) => (
+              <div key={group.key}>
+                <div className="mb-1.5 flex items-baseline gap-2 px-1">
+                  <span
+                    className={`text-xs font-semibold ${
+                      group.key === 'untagged'
+                        ? 'text-slate-400'
+                        : 'text-indigo-600'
+                    }`}
+                  >
+                    {group.label}
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    {group.items.length} batch
+                    {group.items.length === 1 ? '' : 'es'}
+                  </span>
+                </div>
+                <div className="flex gap-3 overflow-x-auto overscroll-x-contain p-1.5">
+                  {group.items.map(
+                    ({ id, source, batch, previews, count, sourceInfo }) => (
               <button
                 key={source}
                 type="button"
@@ -2585,50 +2581,72 @@ function App() {
                     {sourceInfo.name} · v{sourceInfo.version}
                   </div>
                 )}
-                <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 text-left text-xs font-medium text-white">
-                  {source}
+                <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-1 bg-black/60 px-2 py-1 text-left text-xs font-medium text-white">
+                  <span className="truncate">{source}</span>
+                  {count != null && (
+                    <span className="shrink-0 text-[10px] text-white/70">
+                      {count}
+                    </span>
+                  )}
                 </div>
               </button>
+                    ),
+                  )}
+                </div>
+              </div>
             ))}
           </div>
+          {rawSourceGroups.length === 0 && (
+            <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
+              No batches yet — upload images to get started
+            </div>
+          )}
           {selectedRaw && (
             <div className="mt-6">
-              <div className="flex items-baseline gap-3">
+              <div className="flex items-center gap-3">
                 <h3 className="text-base font-semibold text-slate-800">
                   {selectedRaw}
                 </h3>
                 <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                  {selectedRawImages.length}
+                  {selectedRawImages.length} images
                 </span>
-                <select
-                  value={
-                    rawSources.find((r) => r.source === selectedRaw)
-                      ?.sourceInfo?.id ?? ''
-                  }
-                  onChange={(e) =>
-                    assignBatchSource(
-                      selectedBatchId,
-                      e.target.value ? Number(e.target.value) : null,
-                    )
-                  }
-                  className="rounded-full border border-slate-300 bg-white px-3 py-0.5 text-xs text-slate-600 outline-none"
-                  title="Batch source"
-                >
-                  <option value="">No source</option>
-                  {sources.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} · v{s.version}
-                    </option>
-                  ))}
-                </select>
+                {selectedRawInfo?.type && (
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                    {selectedRawInfo.type}
+                  </span>
+                )}
+                {selectedRawInfo?.sourceInfo && (
+                  <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-600">
+                    {selectedRawInfo.sourceInfo.name} · v
+                    {selectedRawInfo.sourceInfo.version}
+                  </span>
+                )}
               </div>
 
               <div className="mt-4 rounded-2xl border border-white/60 bg-white/70 p-5 shadow-sm backdrop-blur-sm">
-                <h4 className="text-base font-semibold text-slate-800">
-                  Menu generate image
-                </h4>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-800">
+                      Generate crops
+                    </h4>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Detect objects in this batch and crop them into a new
+                      batch.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={doGenerateRaw}
+                    disabled={
+                      rawGenerating || rawSelectedClasses.length === 0
+                    }
+                    className="shrink-0 rounded-lg bg-indigo-500 px-5 py-2 text-sm font-semibold text-white shadow transition hover:bg-indigo-600 disabled:opacity-50"
+                  >
+                    {rawGenerating ? 'Generating...' : 'Generate'}
+                  </button>
+                </div>
 
-                <div className="mt-4 flex flex-wrap items-center gap-4">
+                <div className="mt-4 flex flex-wrap items-end gap-x-5 gap-y-3">
                   <label className="text-xs font-medium text-slate-700">
                     Crop margin (px)
                     <input
@@ -2661,7 +2679,7 @@ function App() {
                     />
                   </label>
 
-                  <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                  <label className="flex items-center gap-2 pb-1.5 text-xs font-medium text-slate-700">
                     <input
                       type="checkbox"
                       checked={rawRemoveSource}
@@ -2670,70 +2688,58 @@ function App() {
                     />
                     Remove source batch after generate
                   </label>
+                </div>
 
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <span className="text-xs font-medium text-slate-700">
-                      YOLO classes
-                    </span>
-                    <div className="flex w-full items-center gap-2">
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          const value = e.target.value
-                          if (value && !rawSelectedClasses.includes(value)) {
-                            setRawSelectedClasses((prev) => [...prev, value])
-                          }
-                          e.target.value = ''
-                        }}
-                        className="w-48 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800"
-                      >
-                        <option value="">Add a class</option>
-                        {yoloClasses
-                          .filter((cls) => !rawSelectedClasses.includes(cls))
-                          .map((cls) => (
-                            <option key={cls} value={cls}>
-                              {cls}
-                            </option>
-                          ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={doGenerateRaw}
-                        disabled={
-                          rawGenerating || rawSelectedClasses.length === 0
+                <div className="mt-4 border-t border-slate-200/70 pt-4">
+                  <span className="text-xs font-medium text-slate-700">
+                    YOLO classes
+                  </span>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const value = e.target.value
+                        if (value && !rawSelectedClasses.includes(value)) {
+                          setRawSelectedClasses((prev) => [...prev, value])
                         }
-                        className="rounded-lg bg-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-indigo-600 disabled:opacity-50"
-                      >
-                        {rawGenerating ? 'Generating...' : 'Generate'}
-                      </button>
-                      {rawSelectedClasses.length > 0 ? (
-                        <div className="ml-auto flex flex-wrap justify-end gap-2">
-                          {rawSelectedClasses.map((cls) => (
-                            <span
-                              key={cls}
-                              className="flex items-center gap-2 rounded-full bg-indigo-100 px-3 py-1.5 text-sm font-semibold text-indigo-700"
-                            >
-                              {cls}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setRawSelectedClasses((prev) =>
-                                    prev.filter((c) => c !== cls),
-                                  )
-                                }
-                                className="text-indigo-700 hover:text-indigo-900"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="text-[10px] text-slate-400">
-                          Pick at least one class
+                        e.target.value = ''
+                      }}
+                      className="w-48 rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800"
+                    >
+                      <option value="">Add a class</option>
+                      {yoloClasses
+                        .filter((cls) => !rawSelectedClasses.includes(cls))
+                        .map((cls) => (
+                          <option key={cls} value={cls}>
+                            {cls}
+                          </option>
+                        ))}
+                    </select>
+                    {rawSelectedClasses.length > 0 ? (
+                      rawSelectedClasses.map((cls) => (
+                        <span
+                          key={cls}
+                          className="flex items-center gap-1.5 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700"
+                        >
+                          {cls}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRawSelectedClasses((prev) =>
+                                prev.filter((c) => c !== cls),
+                              )
+                            }
+                            className="text-indigo-500 transition hover:text-red-500"
+                          >
+                            ×
+                          </button>
                         </span>
-                      )}
-                    </div>
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-slate-400">
+                        Pick at least one class
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -4450,6 +4456,125 @@ function App() {
                 className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
               >
                 {savingDatasetSettings ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {uploadSourceOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setUploadSourceOpen(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-slate-800">
+              Select source
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Batches created from this upload will be tagged with the
+              selected source.
+            </p>
+            <div className="mt-4 space-y-2">
+              <button
+                type="button"
+                onClick={() => setUploadSourceId('')}
+                className={`flex w-full items-center rounded-lg border px-3 py-2 text-sm transition ${
+                  uploadSourceId === ''
+                    ? 'border-indigo-400 bg-indigo-50 font-medium text-indigo-700'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                No source
+              </button>
+              {sourcesByName.map(([name, versions]) => (
+                <div
+                  key={name}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-700">
+                      {name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const s = await createSource(name)
+                        if (s) setUploadSourceId(String(s.id))
+                      }}
+                      className="rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100"
+                    >
+                      + version
+                    </button>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {versions.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setUploadSourceId(String(s.id))}
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                          uploadSourceId === String(s.id)
+                            ? 'bg-indigo-500 text-white shadow'
+                            : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                        }`}
+                      >
+                        v{s.version}
+                        <span className="ml-1 opacity-60">
+                          {s.batches} batch{s.batches === 1 ? '' : 'es'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2">
+              <input
+                type="text"
+                value={newSourceName}
+                onChange={(e) => setNewSourceName(e.target.value)}
+                onKeyDown={async (e) => {
+                  if (e.key === 'Enter') {
+                    const s = await createSource(newSourceName)
+                    if (s) setUploadSourceId(String(s.id))
+                  }
+                }}
+                placeholder="New source name (e.g. Shop A)"
+                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 outline-none"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const s = await createSource(newSourceName)
+                  if (s) setUploadSourceId(String(s.id))
+                }}
+                disabled={!newSourceName.trim()}
+                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+              >
+                Add &amp; select
+              </button>
+            </div>
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setUploadSourceOpen(false)}
+                className="flex-1 rounded-lg border border-slate-300 py-2 text-sm text-slate-600 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUploadSourceOpen(false)
+                  tarInputRef.current?.click()
+                }}
+                className="flex-1 rounded-lg bg-indigo-500 py-2 text-sm font-medium text-white transition hover:bg-indigo-600"
+              >
+                Continue → choose file
               </button>
             </div>
           </div>

@@ -1853,9 +1853,18 @@ def _archive_staging(staging: Path, dataset_name: str, db, db_dataset):
 
     (staging / "images").mkdir(parents=True)
     annotations = {}
+    batch_sources = {}
     seen_keys = set()
     image_count = 0
     for db_image, db_batch, db_annotation in rows:
+        if (
+            db_batch.name not in batch_sources
+            and db_batch.source_ref is not None
+        ):
+            batch_sources[db_batch.name] = {
+                "name": db_batch.source_ref.name,
+                "version": db_batch.source_ref.version,
+            }
         src = (UPLOADS_DIR / db_image.path.removeprefix("/uploads/")).resolve()
         if not (src.is_file() and src.is_relative_to(UPLOADS_DIR.resolve())):
             continue
@@ -1879,6 +1888,7 @@ def _archive_staging(staging: Path, dataset_name: str, db, db_dataset):
         "framework": db_dataset.framework or "",
         "model": db_dataset.model or "",
         "split": db_dataset.split or dict(DEFAULT_SPLIT),
+        "batch_sources": batch_sources,
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
     (staging / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -2061,6 +2071,8 @@ def _restore_archive_staging(staging: Path):
             db.flush()
 
             batch_cache = {}
+            source_cache = {}
+            batch_sources = manifest.get("batch_sources") or {}
             linked = set()
             restored = 0
             annotated = 0
@@ -2077,6 +2089,23 @@ def _restore_archive_staging(staging: Path):
                         db_batch = DbBatch(name=batch_name, type="raw")
                         db.add(db_batch)
                         db.flush()
+                    src_info = batch_sources.get(batch_name)
+                    if src_info and db_batch.source_id is None:
+                        key = (src_info.get("name"), str(src_info.get("version") or "1"))
+                        db_source = source_cache.get(key)
+                        if db_source is None and key[0]:
+                            db_source = (
+                                db.query(DbSource)
+                                .filter_by(name=key[0], version=key[1])
+                                .first()
+                            )
+                            if db_source is None:
+                                db_source = DbSource(name=key[0], version=key[1])
+                                db.add(db_source)
+                                db.flush()
+                            source_cache[key] = db_source
+                        if db_source is not None:
+                            db_batch.source_id = db_source.id
                     batch_cache[batch_name] = db_batch
 
                 image_path = f"/uploads/raw-images/{batch_name}/{item.name}"
@@ -2385,6 +2414,8 @@ def list_batches():
                     "id": batch.id,
                     "name": name,
                     "cover": batch.cover,
+                    "count": len(batch.images),
+                    "type": batch.type,
                     "source": _source_dict(batch.source_ref),
                 }
             )
