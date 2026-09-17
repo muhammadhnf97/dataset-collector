@@ -117,8 +117,8 @@ class Annotation(Base, AuditMixin):
     )
 
 
-class Export(Base, AuditMixin):
-    __tablename__ = "exports"
+class Archive(Base, AuditMixin):
+    __tablename__ = "archives"
 
     id = Column(Integer, primary_key=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=False)
@@ -130,13 +130,27 @@ class Export(Base, AuditMixin):
 
 
 def init_db():
+    # Rename legacy table before create_all so it isn't recreated empty.
+    with engine.connect() as conn:
+        tables = {
+            r[0]
+            for r in conn.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "exports" in tables and "archives" not in tables:
+            conn.exec_driver_sql("ALTER TABLE exports RENAME TO archives")
+            conn.commit()
     Base.metadata.create_all(bind=engine)
     # Lightweight migration: create_all does not ALTER existing tables.
     with engine.connect() as conn:
-        cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(exports)")}
+        cols = {
+            r[1]
+            for r in conn.exec_driver_sql("PRAGMA table_info(archives)")
+        }
         if "dataset_name" not in cols:
             conn.exec_driver_sql(
-                "ALTER TABLE exports ADD COLUMN dataset_name VARCHAR"
+                "ALTER TABLE archives ADD COLUMN dataset_name VARCHAR"
             )
             conn.commit()
         batch_cols = {

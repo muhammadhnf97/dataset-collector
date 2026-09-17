@@ -396,7 +396,11 @@ function ArchiveIcon({ className }) {
 
 function formatRelativeTime(dateString) {
   if (!dateString) return null
-  const then = new Date(dateString).getTime()
+  // Server emits naive UTC; without a suffix the browser parses it as local.
+  const iso = /Z$|[+-]\d{2}:?\d{2}$/.test(dateString)
+    ? dateString
+    : `${dateString}Z`
+  const then = new Date(iso).getTime()
   if (Number.isNaN(then)) return null
   const seconds = Math.floor((Date.now() - then) / 1000)
   if (seconds < 5) return 'just now'
@@ -524,8 +528,8 @@ function App() {
   const [importArchiveOpen, setImportArchiveOpen] = useState(false)
   const [uploadingArchive, setUploadingArchive] = useState(false)
   const importFileRef = useRef(null)
-  const [restoringExportId, setRestoringExportId] = useState(null)
-  const [confirmingDeleteExport, setConfirmingDeleteExport] = useState(null)
+  const [restoringArchiveId, setRestoringArchiveId] = useState(null)
+  const [confirmingDeleteArchive, setConfirmingDeleteArchive] = useState(null)
   const [sources, setSources] = useState([])
   const [sourceModalOpen, setSourceModalOpen] = useState(false)
   const [newSourceName, setNewSourceName] = useState('')
@@ -1686,11 +1690,11 @@ function App() {
     }
   }
 
-  const fetchExports = async () => {
+  const fetchArchives = async () => {
     try {
-      const response = await fetch('/api/exports')
+      const response = await fetch('/api/archives')
       const data = await response.json()
-      if (response.ok) setArchives(data.exports ?? [])
+      if (response.ok) setArchives(data.archives ?? [])
     } catch {
       // ignore
     }
@@ -1717,7 +1721,7 @@ function App() {
       setStatus(
         `Archived ${data.archive} (${data.images} images, ${data.annotated} annotated)`,
       )
-      fetchExports()
+      fetchArchives()
     } catch {
       setStatus('Failed: could not reach the server')
     } finally {
@@ -1725,16 +1729,16 @@ function App() {
     }
   }
 
-  const doDeleteExport = async (id) => {
-    setConfirmingDeleteExport(null)
+  const doDeleteArchive = async (id) => {
+    setConfirmingDeleteArchive(null)
     try {
-      const response = await fetch(`/api/exports/${id}`, { method: 'DELETE' })
+      const response = await fetch(`/api/archives/${id}`, { method: 'DELETE' })
       if (!response.ok) {
         setStatus('Failed: could not delete archive')
         return
       }
       setStatus('Archive deleted')
-      fetchExports()
+      fetchArchives()
     } catch {
       setStatus('Failed: could not reach the server')
     }
@@ -1749,7 +1753,7 @@ function App() {
     setUploadingArchive(true)
     setStatus('Uploading and restoring archive...')
     try {
-      const response = await fetch('/api/exports/import', {
+      const response = await fetch('/api/archives/import', {
         method: 'POST',
         body: formData,
       })
@@ -1762,7 +1766,7 @@ function App() {
         `Restored dataset ${data.dataset} (${data.images} images) from ${data.archive}`,
       )
       setImportArchiveOpen(false)
-      fetchExports()
+      fetchArchives()
       await fetchDatasets()
     } catch {
       setStatus('Failed: could not reach the server')
@@ -1771,12 +1775,12 @@ function App() {
     }
   }
 
-  const doRestoreExport = async (id) => {
-    if (restoringExportId) return
-    setRestoringExportId(id)
+  const doRestoreArchive = async (id) => {
+    if (restoringArchiveId) return
+    setRestoringArchiveId(id)
     setStatus('Restoring dataset...')
     try {
-      const response = await fetch(`/api/exports/${id}/restore`, {
+      const response = await fetch(`/api/archives/${id}/restore`, {
         method: 'POST',
       })
       const data = await response.json()
@@ -1790,7 +1794,7 @@ function App() {
     } catch {
       setStatus('Failed: could not reach the server')
     } finally {
-      setRestoringExportId(null)
+      setRestoringArchiveId(null)
     }
   }
 
@@ -1927,7 +1931,7 @@ function App() {
 
   useEffect(() => {
     if (activePage === 'archives' || archivesOpen || importArchiveOpen) {
-      fetchExports()
+      fetchArchives()
     }
   }, [activePage, archivesOpen, importArchiveOpen])
 
@@ -3291,24 +3295,24 @@ function App() {
                     </div>
                     <div className="ml-auto flex shrink-0 items-center gap-1">
                       <a
-                        href={`/api/exports/${a.id}/download`}
+                        href={`/api/archives/${a.id}/download`}
                         className="rounded-md px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
                       >
                         Download
                       </a>
                       <button
                         type="button"
-                        onClick={() => doRestoreExport(a.id)}
-                        disabled={!a.exists || restoringExportId !== null}
+                        onClick={() => doRestoreArchive(a.id)}
+                        disabled={!a.exists || restoringArchiveId !== null}
                         className="rounded-md px-2 py-1 text-xs font-medium text-emerald-600 transition hover:bg-emerald-50 disabled:opacity-40"
                       >
-                        {restoringExportId === a.id
+                        {restoringArchiveId === a.id
                           ? 'Restoring...'
                           : 'Restore'}
                       </button>
                       <button
                         type="button"
-                        onClick={() => setConfirmingDeleteExport(a)}
+                        onClick={() => setConfirmingDeleteArchive(a)}
                         className="rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
                       >
                         Delete
@@ -4618,14 +4622,14 @@ function App() {
                       </div>
                       <div className="ml-auto flex shrink-0 items-center gap-1">
                         <a
-                          href={`/api/exports/${a.id}/download`}
+                          href={`/api/archives/${a.id}/download`}
                           className="rounded-md px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
                         >
                           Download
                         </a>
                         <button
                           type="button"
-                          onClick={() => setConfirmingDeleteExport(a)}
+                          onClick={() => setConfirmingDeleteArchive(a)}
                           className="rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
                         >
                           Delete
@@ -4678,7 +4682,7 @@ function App() {
               <button
                 type="button"
                 onClick={() => importFileRef.current?.click()}
-                disabled={uploadingArchive || restoringExportId !== null}
+                disabled={uploadingArchive || restoringArchiveId !== null}
                 className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-600 disabled:opacity-40"
               >
                 {uploadingArchive ? 'Uploading...' : 'Choose file'}
@@ -4710,11 +4714,11 @@ function App() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => doRestoreExport(a.id)}
-                      disabled={!a.exists || restoringExportId !== null}
+                      onClick={() => doRestoreArchive(a.id)}
+                      disabled={!a.exists || restoringArchiveId !== null}
                       className="ml-auto shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-600 disabled:opacity-40"
                     >
-                      {restoringExportId === a.id ? 'Restoring...' : 'Restore'}
+                      {restoringArchiveId === a.id ? 'Restoring...' : 'Restore'}
                     </button>
                   </div>
                 ))
@@ -4733,13 +4737,13 @@ function App() {
         </div>
       )}
 
-      {confirmingDeleteExport && (
+      {confirmingDeleteArchive && (
         <ConfirmModal
           count={1}
-          title={`Delete ${confirmingDeleteExport.name}?`}
+          title={`Delete ${confirmingDeleteArchive.name}?`}
           message="This permanently deletes the archive file from the server. This action cannot be undone."
-          onCancel={() => setConfirmingDeleteExport(null)}
-          onConfirm={() => doDeleteExport(confirmingDeleteExport.id)}
+          onCancel={() => setConfirmingDeleteArchive(null)}
+          onConfirm={() => doDeleteArchive(confirmingDeleteArchive.id)}
         />
       )}
 

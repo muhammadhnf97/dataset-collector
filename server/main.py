@@ -29,7 +29,7 @@ from db import (
     DatasetImage as DbDatasetImage,
     Image as DbImage,
     Annotation as DbAnnotation,
-    Export as DbExport,
+    Archive as DbArchive,
     Source as DbSource,
 )
 
@@ -1932,7 +1932,7 @@ def archive_dataset(name: str, payload: dict | None = None):
                         tar.add(item, arcname=item.name)
 
         db.add(
-            DbExport(
+            DbArchive(
                 dataset_id=db_dataset.id,
                 dataset_name=name,
                 format=export_format,
@@ -1952,12 +1952,12 @@ def archive_dataset(name: str, payload: dict | None = None):
     }
 
 
-@app.get("/exports")
-def list_exports():
+@app.get("/archives")
+def list_archives():
     db = SessionLocal()
     try:
         items = []
-        for e in db.query(DbExport).order_by(DbExport.created_at.desc()).all():
+        for e in db.query(DbArchive).order_by(DbArchive.created_at.desc()).all():
             path = (BASE_DIR / (e.archive_path or "")).resolve()
             items.append(
                 {
@@ -1971,18 +1971,18 @@ def list_exports():
                     "created_at": e.created_at.isoformat() if e.created_at else None,
                 }
             )
-        return {"exports": items}
+        return {"archives": items}
     finally:
         db.close()
 
 
-@app.get("/exports/{export_id}/download")
-def download_export(export_id: int):
+@app.get("/archives/{archive_id}/download")
+def download_archive(archive_id: int):
     db = SessionLocal()
     try:
-        e = db.query(DbExport).filter_by(id=export_id).first()
+        e = db.query(DbArchive).filter_by(id=archive_id).first()
         if not e or not e.archive_path:
-            raise HTTPException(status_code=404, detail="Export not found")
+            raise HTTPException(status_code=404, detail="Archive not found")
         path = (BASE_DIR / e.archive_path).resolve()
     finally:
         db.close()
@@ -1991,13 +1991,13 @@ def download_export(export_id: int):
     return FileResponse(path, filename=path.name)
 
 
-@app.delete("/exports/{export_id}")
-def delete_export(export_id: int):
+@app.delete("/archives/{archive_id}")
+def delete_archive(archive_id: int):
     db = SessionLocal()
     try:
-        e = db.query(DbExport).filter_by(id=export_id).first()
+        e = db.query(DbArchive).filter_by(id=archive_id).first()
         if not e:
-            raise HTTPException(status_code=404, detail="Export not found")
+            raise HTTPException(status_code=404, detail="Archive not found")
         path = (BASE_DIR / (e.archive_path or "")).resolve()
         db.delete(e)
         db.commit()
@@ -2005,7 +2005,7 @@ def delete_export(export_id: int):
         db.close()
     if path.is_file() and path.is_relative_to(ARCHIVES_DIR.resolve()):
         path.unlink()
-    return {"deleted": export_id}
+    return {"deleted": archive_id}
 
 
 def _extract_archive(archive_path: Path, staging: Path):
@@ -2140,13 +2140,13 @@ def _restore_archive_staging(staging: Path):
     return new_name, restored, annotated, dataset_id, manifest
 
 
-@app.post("/exports/{export_id}/restore")
-def restore_export(export_id: int):
+@app.post("/archives/{archive_id}/restore")
+def restore_archive(archive_id: int):
     db = SessionLocal()
     try:
-        e = db.query(DbExport).filter_by(id=export_id).first()
+        e = db.query(DbArchive).filter_by(id=archive_id).first()
         if not e or not e.archive_path:
-            raise HTTPException(status_code=404, detail="Export not found")
+            raise HTTPException(status_code=404, detail="Archive not found")
         archive_path = (BASE_DIR / e.archive_path).resolve()
     finally:
         db.close()
@@ -2164,8 +2164,8 @@ def restore_export(export_id: int):
     return {"dataset": new_name, "images": restored}
 
 
-@app.post("/exports/import")
-def import_export_archive(file: UploadFile = File(...)):
+@app.post("/archives/import")
+def import_archive(file: UploadFile = File(...)):
     filename = Path(file.filename or "archive").name
     lower = filename.lower()
     ext_full = next(
@@ -2219,7 +2219,7 @@ def import_export_archive(file: UploadFile = File(...)):
     db = SessionLocal()
     try:
         db.add(
-            DbExport(
+            DbArchive(
                 dataset_id=dataset_id,
                 dataset_name=manifest["name"],
                 format=fmt,
