@@ -32,6 +32,18 @@ class AuditMixin:
     updated_by = Column(String, default="system", onupdate="system")
 
 
+class Source(Base, AuditMixin):
+    __tablename__ = "sources"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)  # e.g. "Shop A"
+    version = Column(String, nullable=False, default="1")
+
+    __table_args__ = (
+        UniqueConstraint("name", "version", name="uq_source_name_version"),
+    )
+
+
 class Batch(Base, AuditMixin):
     __tablename__ = "batches"
 
@@ -39,8 +51,10 @@ class Batch(Base, AuditMixin):
     name = Column(String, unique=True, nullable=False)
     type = Column(String, nullable=False)  # raw | video | frames | crops
     source = Column(String)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
     cover = Column(String)
 
+    source_ref = relationship("Source")
     images = relationship("Image", back_populates="batch")
 
 
@@ -67,7 +81,9 @@ class Dataset(Base, AuditMixin):
     model = Column(String)
     split = Column(JSON, default={"train": 70, "val": 20, "test": 10})
 
-    images = relationship("DatasetImage", back_populates="dataset")
+    images = relationship(
+        "DatasetImage", back_populates="dataset", cascade="all, delete-orphan"
+    )
 
 
 class DatasetImage(Base, AuditMixin):
@@ -106,6 +122,7 @@ class Export(Base, AuditMixin):
 
     id = Column(Integer, primary_key=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=False)
+    dataset_name = Column(String)
     format = Column(String, nullable=False)
     archive_path = Column(String)
     split = Column(JSON)
@@ -114,3 +131,20 @@ class Export(Base, AuditMixin):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Lightweight migration: create_all does not ALTER existing tables.
+    with engine.connect() as conn:
+        cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(exports)")}
+        if "dataset_name" not in cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE exports ADD COLUMN dataset_name VARCHAR"
+            )
+            conn.commit()
+        batch_cols = {
+            r[1] for r in conn.exec_driver_sql("PRAGMA table_info(batches)")
+        }
+        if "source_id" not in batch_cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE batches ADD COLUMN source_id INTEGER "
+                "REFERENCES sources(id)"
+            )
+            conn.commit()

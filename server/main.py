@@ -9,11 +9,12 @@ import zipfile
 import tempfile
 import threading
 import uuid
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
 import yaml
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,6 +29,8 @@ from db import (
     DatasetImage as DbDatasetImage,
     Image as DbImage,
     Annotation as DbAnnotation,
+    Export as DbExport,
+    Source as DbSource,
 )
 
 app = FastAPI(title="Dataset Collector API")
@@ -45,8 +48,9 @@ UPLOADS_DIR = BASE_DIR / "uploads"
 RAW_IMAGES_DIR = UPLOADS_DIR / "raw-images"
 DATASETS_DIR = BASE_DIR / "datasets"
 TEMPLATES_DIR = BASE_DIR / "template"
+ARCHIVES_DIR = BASE_DIR / "archives"
 
-for directory in (RAW_IMAGES_DIR, DATASETS_DIR):
+for directory in (RAW_IMAGES_DIR, DATASETS_DIR, ARCHIVES_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
@@ -234,6 +238,8 @@ def save_datasets(data: dict):
                 ds.split = entry["split"]
         for name, ds in list(existing.items()):
             if name not in seen:
+                db.query(DbDatasetImage).filter_by(dataset_id=ds.id).delete()
+                db.query(DbAnnotation).filter_by(dataset_id=ds.id).delete()
                 db.delete(ds)
         db.commit()
     finally:
@@ -267,7 +273,7 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 
 @app.post("/upload/tar")
-def _process_uploaded_files(tmp_path: Path):
+def _process_uploaded_files(tmp_path: Path, source_id: int | None = None):
     saved_images = []
     folders = {}
     batches = []
@@ -313,9 +319,12 @@ def _process_uploaded_files(tmp_path: Path):
                             name=batch_name,
                             type="raw",
                             source=source_name or None,
+                            source_id=source_id,
                         )
                         db.add(batch)
                         db.flush()
+                    elif batch.source_id is None:
+                        batch.source_id = source_id
                     batch_objs[batch_name] = batch
 
                 db_image = DbImage(
@@ -344,7 +353,10 @@ def _process_uploaded_files(tmp_path: Path):
 
 
 @app.post("/upload/image")
-async def upload_image(file: UploadFile = File(...)):
+async def upload_image(
+    file: UploadFile = File(...),
+    source_id: int | None = Form(None),
+):
     filename = file.filename or ""
     lowered = filename.lower()
 
@@ -359,7 +371,7 @@ async def upload_image(file: UploadFile = File(...)):
                     tar.extractall(tmp_path, filter="data")
             except tarfile.TarError:
                 raise HTTPException(status_code=400, detail="Invalid tar archive")
-            return _process_uploaded_files(tmp_path)
+            return _process_uploaded_files(tmp_path, source_id)
 
     if lowered.endswith(".zip"):
         with tempfile.TemporaryDirectory() as tmp:
@@ -373,7 +385,7 @@ async def upload_image(file: UploadFile = File(...)):
                     zf.extractall(tmp_path)
             except zipfile.BadZipFile:
                 raise HTTPException(status_code=400, detail="Invalid zip archive")
-            return _process_uploaded_files(tmp_path)
+            return _process_uploaded_files(tmp_path, source_id)
 
     if lowered.endswith(".rar"):
         try:
@@ -390,7 +402,7 @@ async def upload_image(file: UploadFile = File(...)):
                     rf.extractall(tmp_path)
             except rarfile.Error:
                 raise HTTPException(status_code=400, detail="Invalid rar archive")
-            return _process_uploaded_files(tmp_path)
+            return _process_uploaded_files(tmp_path, source_id)
 
     ext = Path(filename).suffix.lower()
     if ext in IMAGE_EXTENSIONS:
@@ -416,9 +428,12 @@ async def upload_image(file: UploadFile = File(...)):
                     name=batch_name,
                     type="raw",
                     source=source_name or None,
+                    source_id=source_id,
                 )
                 db.add(batch)
                 db.flush()
+            elif batch.source_id is None:
+                batch.source_id = source_id
             db_image = DbImage(
                 batch_id=batch.id,
                 path=image_path,
@@ -496,18 +511,19 @@ def generate_raw_images(source: str, payload: dict):
 
         db = SessionLocal()
         try:
-            if remove_source:
-                source_batch = db.query(DbBatch).filter_by(name=source_name, type="raw").first()
-                if source_batch:
-                    for img in list(source_batch.images):
-                        db.delete(img)
-                    db.delete(source_batch)
+            source_batch = db.query(DbBatch).filter_by(name=source_name).first()
+            parent_source_id = source_batch.source_id if source_batch else None
+            if remove_source and source_batch:
+                for img in list(source_batch.images):
+                    db.delete(img)
+                db.delete(source_batch)
 
             new_type = "raw"
             new_batch = DbBatch(
                 name=batch_name,
                 type=new_type,
                 source=source_name,
+                source_id=parent_source_id,
                 cover=urls[0] if urls else None,
             )
             db.add(new_batch)
@@ -564,17 +580,18 @@ def generate_raw_images(source: str, payload: dict):
 
     db = SessionLocal()
     try:
-        if remove_source:
-            source_batch = db.query(DbBatch).filter_by(name=source_name, type="raw").first()
-            if source_batch:
-                for img in list(source_batch.images):
-                    db.delete(img)
-                db.delete(source_batch)
+        source_batch = db.query(DbBatch).filter_by(name=source_name).first()
+        parent_source_id = source_batch.source_id if source_batch else None
+        if remove_source and source_batch:
+            for img in list(source_batch.images):
+                db.delete(img)
+            db.delete(source_batch)
 
         new_batch = DbBatch(
             name=batch_name,
             type="crops",
             source=source_name,
+            source_id=parent_source_id,
             cover=urls[0] if urls else None,
         )
         db.add(new_batch)
@@ -1287,6 +1304,7 @@ def get_dataset_images(name: str):
         raise HTTPException(status_code=404, detail="Dataset not found")
     groups = {}
     seen = set()
+    batch_sources = {}
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
@@ -1304,12 +1322,19 @@ def get_dataset_images(name: str):
                 stem = display.replace("/", "_")
                 if stem not in groups:
                     groups[stem] = []
+                    src = _source_dict(db_batch.source_ref)
+                    if src:
+                        batch_sources[stem] = src
                 if db_image.path not in seen:
                     seen.add(db_image.path)
                     groups[stem].append(db_image.path)
     finally:
         db.close()
-    return {"dataset": name, "groups": groups}
+    return {
+        "dataset": name,
+        "groups": groups,
+        "batch_sources": batch_sources,
+    }
 
 
 def annotations_file(dir_name: str):
@@ -1479,6 +1504,7 @@ def set_dataset_annotation(name: str, payload: dict):
             set_={
                 "values": stmt.excluded["values"],
                 "updated_by": stmt.excluded["updated_by"],
+                "updated_at": datetime.utcnow(),
             },
         )
         db.execute(stmt)
@@ -1802,6 +1828,551 @@ def download_dataset(name: str, format: str = "tar"):
     return FileResponse(archive_path, filename=f"{name}.{ext}", media_type=media_type)
 
 
+ARCHIVE_FORMATS = {
+    "tar": ("tar", "w", "application/x-tar"),
+    "zip": ("zip", None, "application/zip"),
+    "tar.gz": ("tar.gz", "w:gz", "application/gzip"),
+}
+
+
+def _archive_staging(staging: Path, dataset_name: str, db, db_dataset):
+    """Build the restorable archive contents under `staging`."""
+    rows = (
+        db.query(DbImage, DbBatch, DbAnnotation)
+        .join(DbDatasetImage, DbImage.id == DbDatasetImage.image_id)
+        .join(DbBatch, DbDatasetImage.batch_id == DbBatch.id)
+        .outerjoin(
+            DbAnnotation,
+            (DbAnnotation.image_id == DbImage.id)
+            & (DbAnnotation.dataset_id == db_dataset.id),
+        )
+        .filter(DbDatasetImage.dataset_id == db_dataset.id)
+        .order_by(DbBatch.name, DbImage.path)
+        .all()
+    )
+
+    (staging / "images").mkdir(parents=True)
+    annotations = {}
+    seen_keys = set()
+    image_count = 0
+    for db_image, db_batch, db_annotation in rows:
+        src = (UPLOADS_DIR / db_image.path.removeprefix("/uploads/")).resolve()
+        if not (src.is_file() and src.is_relative_to(UPLOADS_DIR.resolve())):
+            continue
+        rel_key = f"{db_batch.name}/{src.name}"
+        if rel_key in seen_keys:
+            rel_key = f"{db_batch.name}/{uuid.uuid4().hex[:8]}_{src.name}"
+        seen_keys.add(rel_key)
+        dest = staging / "images" / rel_key
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        image_count += 1
+        if db_annotation is not None:
+            annotations[rel_key] = {
+                "values": db_annotation.values or [],
+                "pre_labels": db_annotation.pre_labels or [],
+            }
+
+    manifest = {
+        "version": 1,
+        "name": dataset_name,
+        "framework": db_dataset.framework or "",
+        "model": db_dataset.model or "",
+        "split": db_dataset.split or dict(DEFAULT_SPLIT),
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    (staging / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (staging / "annotations.json").write_text(json.dumps(annotations))
+    return image_count, len(annotations), manifest["split"]
+
+
+@app.post("/datasets/{name}/archive")
+def archive_dataset(name: str, payload: dict | None = None):
+    payload = payload or {}
+    name = unquote(name)
+    datasets = load_datasets()
+    if name not in datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    export_format = (payload.get("format") or "tar.gz").strip().lower()
+    if export_format not in ARCHIVE_FORMATS:
+        raise HTTPException(status_code=400, detail="Unsupported archive format")
+
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found in DB")
+
+        ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or "dataset"
+        ext, tar_mode, media_type = ARCHIVE_FORMATS[export_format]
+        archive_name = f"{safe}-archive-{ts}.{ext}"
+        archive_path = ARCHIVES_DIR / archive_name
+
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = Path(tmp) / "archive"
+            image_count, annotated_count, split = _archive_staging(
+                staging, name, db, db_dataset
+            )
+            if image_count == 0:
+                raise HTTPException(status_code=400, detail="Dataset has no images")
+
+            if export_format == "zip":
+                with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as z:
+                    for item in sorted(staging.rglob("*")):
+                        if item.is_file():
+                            z.write(
+                                item,
+                                arcname=item.relative_to(staging).as_posix(),
+                            )
+            else:
+                with tarfile.open(archive_path, tar_mode) as tar:
+                    for item in sorted(staging.iterdir()):
+                        tar.add(item, arcname=item.name)
+
+        db.add(
+            DbExport(
+                dataset_id=db_dataset.id,
+                dataset_name=name,
+                format=export_format,
+                archive_path=archive_path.relative_to(BASE_DIR).as_posix(),
+                split=split,
+                counts={"images": image_count, "annotated": annotated_count},
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    return {
+        "archive": archive_name,
+        "images": image_count,
+        "annotated": annotated_count,
+    }
+
+
+@app.get("/exports")
+def list_exports():
+    db = SessionLocal()
+    try:
+        items = []
+        for e in db.query(DbExport).order_by(DbExport.created_at.desc()).all():
+            path = (BASE_DIR / (e.archive_path or "")).resolve()
+            items.append(
+                {
+                    "id": e.id,
+                    "dataset": e.dataset_name,
+                    "format": e.format,
+                    "name": path.name,
+                    "size": path.stat().st_size if path.is_file() else 0,
+                    "exists": path.is_file(),
+                    "counts": e.counts or {},
+                    "created_at": e.created_at.isoformat() if e.created_at else None,
+                }
+            )
+        return {"exports": items}
+    finally:
+        db.close()
+
+
+@app.get("/exports/{export_id}/download")
+def download_export(export_id: int):
+    db = SessionLocal()
+    try:
+        e = db.query(DbExport).filter_by(id=export_id).first()
+        if not e or not e.archive_path:
+            raise HTTPException(status_code=404, detail="Export not found")
+        path = (BASE_DIR / e.archive_path).resolve()
+    finally:
+        db.close()
+    if not path.is_file() or not path.is_relative_to(ARCHIVES_DIR.resolve()):
+        raise HTTPException(status_code=404, detail="Archive file not found")
+    return FileResponse(path, filename=path.name)
+
+
+@app.delete("/exports/{export_id}")
+def delete_export(export_id: int):
+    db = SessionLocal()
+    try:
+        e = db.query(DbExport).filter_by(id=export_id).first()
+        if not e:
+            raise HTTPException(status_code=404, detail="Export not found")
+        path = (BASE_DIR / (e.archive_path or "")).resolve()
+        db.delete(e)
+        db.commit()
+    finally:
+        db.close()
+    if path.is_file() and path.is_relative_to(ARCHIVES_DIR.resolve()):
+        path.unlink()
+    return {"deleted": export_id}
+
+
+def _extract_archive(archive_path: Path, staging: Path):
+    name = archive_path.name.lower()
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(archive_path) as z:
+            z.extractall(staging)
+    elif name.endswith(".rar"):
+        subprocess.run(
+            ["bsdtar", "-xf", str(archive_path), "-C", str(staging)],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        with tarfile.open(archive_path) as t:
+            t.extractall(staging)
+
+
+def _restore_archive_staging(staging: Path):
+    manifest = _load_manifest(staging / "manifest.json")
+    if not manifest or not manifest.get("name"):
+        raise HTTPException(
+            status_code=400, detail="Invalid archive: manifest.json missing"
+        )
+    annotations = {}
+    ann_path = staging / "annotations.json"
+    if ann_path.is_file():
+        annotations = json.loads(ann_path.read_text()) or {}
+
+    base_name = manifest["name"]
+    with DATASETS_LOCK:
+        datasets = load_datasets()
+        new_name = base_name
+        if new_name in datasets:
+            new_name = f"{base_name}-restored"
+            i = 2
+            while new_name in datasets:
+                new_name = f"{base_name}-restored-{i}"
+                i += 1
+        dataset_dir_name = next_dataset_dir_name()
+        (DATASETS_DIR / dataset_dir_name).mkdir(parents=True)
+
+        db = SessionLocal()
+        try:
+            db_dataset = DbDataset(
+                name=new_name,
+                dir_name=dataset_dir_name,
+                framework=manifest.get("framework") or "",
+                model=manifest.get("model") or "",
+                split=manifest.get("split") or dict(DEFAULT_SPLIT),
+            )
+            db.add(db_dataset)
+            db.flush()
+
+            batch_cache = {}
+            linked = set()
+            restored = 0
+            annotated = 0
+            for item in sorted((staging / "images").rglob("*")):
+                if not item.is_file() or item.suffix.lower() not in IMAGE_EXTENSIONS:
+                    continue
+                batch_name = item.parent.name
+                db_batch = batch_cache.get(batch_name)
+                if db_batch is None:
+                    db_batch = (
+                        db.query(DbBatch).filter_by(name=batch_name).first()
+                    )
+                    if db_batch is None:
+                        db_batch = DbBatch(name=batch_name, type="raw")
+                        db.add(db_batch)
+                        db.flush()
+                    batch_cache[batch_name] = db_batch
+
+                image_path = f"/uploads/raw-images/{batch_name}/{item.name}"
+                db_image = db.query(DbImage).filter_by(path=image_path).first()
+                if db_image is None:
+                    batch_dir = RAW_IMAGES_DIR / batch_name
+                    batch_dir.mkdir(parents=True, exist_ok=True)
+                    dest = batch_dir / item.name
+                    if dest.exists():
+                        stem, suffix = item.stem, item.suffix
+                        n = 1
+                        while dest.exists():
+                            dest = batch_dir / f"{stem}-{n}{suffix}"
+                            n += 1
+                    shutil.copy2(item, dest)
+                    image_path = f"/uploads/raw-images/{batch_name}/{dest.name}"
+                    db_image = DbImage(
+                        batch_id=db_batch.id,
+                        path=image_path,
+                        filename=dest.name,
+                    )
+                    db.add(db_image)
+                    db.flush()
+
+                if db_image.id not in linked:
+                    db.add(
+                        DbDatasetImage(
+                            dataset_id=db_dataset.id,
+                            image_id=db_image.id,
+                            batch_id=db_batch.id,
+                        )
+                    )
+                    linked.add(db_image.id)
+
+                rel_key = f"{batch_name}/{item.name}"
+                ann = annotations.get(rel_key)
+                if ann:
+                    db.add(
+                        DbAnnotation(
+                            dataset_id=db_dataset.id,
+                            image_id=db_image.id,
+                            values=ann.get("values") or [],
+                            pre_labels=ann.get("pre_labels") or [],
+                        )
+                    )
+                    annotated += 1
+                restored += 1
+            dataset_id = db_dataset.id
+            db.commit()
+        finally:
+            db.close()
+
+    _save_manifest(
+        dataset_dir_name,
+        {
+            "name": new_name,
+            "framework": manifest.get("framework"),
+            "model": manifest.get("model"),
+        },
+    )
+    return new_name, restored, annotated, dataset_id, manifest
+
+
+@app.post("/exports/{export_id}/restore")
+def restore_export(export_id: int):
+    db = SessionLocal()
+    try:
+        e = db.query(DbExport).filter_by(id=export_id).first()
+        if not e or not e.archive_path:
+            raise HTTPException(status_code=404, detail="Export not found")
+        archive_path = (BASE_DIR / e.archive_path).resolve()
+    finally:
+        db.close()
+    if not archive_path.is_file() or not archive_path.is_relative_to(
+        ARCHIVES_DIR.resolve()
+    ):
+        raise HTTPException(status_code=404, detail="Archive file not found")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = Path(tmp) / "archive"
+        staging.mkdir()
+        _extract_archive(archive_path, staging)
+        new_name, restored, _, _, _ = _restore_archive_staging(staging)
+
+    return {"dataset": new_name, "images": restored}
+
+
+@app.post("/exports/import")
+def import_export_archive(file: UploadFile = File(...)):
+    filename = Path(file.filename or "archive").name
+    lower = filename.lower()
+    ext_full = next(
+        (
+            s
+            for s in (".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tar", ".zip", ".rar")
+            if lower.endswith(s)
+        ),
+        None,
+    )
+    if not ext_full:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported archive type. Use .tar, .tar.gz, .zip or .rar",
+        )
+    fmt = {".tgz": "tar.gz", ".tar.bz2": "tar", ".tar.xz": "tar"}.get(
+        ext_full, ext_full.lstrip(".")
+    )
+
+    safe_base = re.sub(r"[^A-Za-z0-9._-]+", "-", filename[: -len(ext_full)]).strip(
+        "-"
+    ) or "dataset"
+    dest = ARCHIVES_DIR / f"{safe_base}{ext_full}"
+    n = 1
+    while dest.exists():
+        dest = ARCHIVES_DIR / f"{safe_base}-{n}{ext_full}"
+        n += 1
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = Path(tmp) / "archive"
+        staging.mkdir()
+        try:
+            _extract_archive(dest, staging)
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400, detail="Could not extract archive"
+            )
+        if not _load_manifest(staging / "manifest.json"):
+            dest.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=400,
+                detail="Not a dataset archive (manifest.json missing)",
+            )
+        new_name, restored, annotated, dataset_id, manifest = (
+            _restore_archive_staging(staging)
+        )
+
+    db = SessionLocal()
+    try:
+        db.add(
+            DbExport(
+                dataset_id=dataset_id,
+                dataset_name=manifest["name"],
+                format=fmt,
+                archive_path=dest.relative_to(BASE_DIR).as_posix(),
+                split=manifest.get("split"),
+                counts={"images": restored, "annotated": annotated},
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    return {
+        "dataset": new_name,
+        "images": restored,
+        "archive": dest.name,
+    }
+
+
+def _source_dict(src):
+    if not src:
+        return None
+    return {"id": src.id, "name": src.name, "version": src.version}
+
+
+@app.get("/sources")
+def list_sources():
+    db = SessionLocal()
+    try:
+        items = []
+        for src in (
+            db.query(DbSource).order_by(DbSource.name, DbSource.version).all()
+        ):
+            items.append(
+                {
+                    "id": src.id,
+                    "name": src.name,
+                    "version": src.version,
+                    "batches": db.query(DbBatch)
+                    .filter(DbBatch.source_id == src.id)
+                    .count(),
+                }
+            )
+        return {"sources": items}
+    finally:
+        db.close()
+
+
+@app.post("/sources")
+def create_source(payload: dict = Body(...)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Source name required")
+    version = (str(payload.get("version") or "")).strip()
+    db = SessionLocal()
+    try:
+        existing = [
+            s.version
+            for s in db.query(DbSource).filter(DbSource.name == name).all()
+        ]
+        if not version:
+            numeric = [int(v) for v in existing if str(v).isdigit()]
+            n = max(numeric, default=0) + 1
+            while str(n) in existing:
+                n += 1
+            version = str(n)
+        if version in existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source '{name}' version '{version}' already exists",
+            )
+        src = DbSource(name=name, version=version)
+        db.add(src)
+        db.commit()
+        db.refresh(src)
+        return _source_dict(src)
+    finally:
+        db.close()
+
+
+@app.patch("/sources/{source_id}")
+def update_source(source_id: int, payload: dict = Body(...)):
+    db = SessionLocal()
+    try:
+        src = db.query(DbSource).filter_by(id=source_id).first()
+        if not src:
+            raise HTTPException(status_code=404, detail="Source not found")
+        name = (payload.get("name") or src.name).strip()
+        version = (str(payload.get("version") or src.version)).strip()
+        if not name or not version:
+            raise HTTPException(
+                status_code=400, detail="Name and version are required"
+            )
+        clash = (
+            db.query(DbSource)
+            .filter(
+                DbSource.name == name,
+                DbSource.version == version,
+                DbSource.id != source_id,
+            )
+            .first()
+        )
+        if clash:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source '{name}' version '{version}' already exists",
+            )
+        src.name = name
+        src.version = version
+        db.commit()
+        return _source_dict(src)
+    finally:
+        db.close()
+
+
+@app.delete("/sources/{source_id}")
+def delete_source(source_id: int):
+    db = SessionLocal()
+    try:
+        src = db.query(DbSource).filter_by(id=source_id).first()
+        if not src:
+            raise HTTPException(status_code=404, detail="Source not found")
+        for batch in db.query(DbBatch).filter(DbBatch.source_id == src.id):
+            batch.source_id = None
+        db.delete(src)
+        db.commit()
+        return {"deleted": src.id}
+    finally:
+        db.close()
+
+
+@app.post("/batches/{batch_id}/source")
+def set_batch_source(batch_id: int, payload: dict = Body(...)):
+    source_id = payload.get("source_id")
+    db = SessionLocal()
+    try:
+        batch = db.query(DbBatch).filter_by(id=batch_id).first()
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        if source_id is not None:
+            src = db.query(DbSource).filter_by(id=source_id).first()
+            if not src:
+                raise HTTPException(status_code=404, detail="Source not found")
+        batch.source_id = source_id
+        db.commit()
+        return {
+            "batch": batch.name,
+            "source": _source_dict(batch.source_ref),
+        }
+    finally:
+        db.close()
+
+
 @app.get("/batches")
 def list_batches():
     db = SessionLocal()
@@ -1809,7 +2380,14 @@ def list_batches():
         items = []
         for batch in db.query(DbBatch).order_by(DbBatch.name).all():
             name = f"raw-images/{batch.name}"
-            items.append({"id": batch.id, "name": name, "cover": batch.cover})
+            items.append(
+                {
+                    "id": batch.id,
+                    "name": name,
+                    "cover": batch.cover,
+                    "source": _source_dict(batch.source_ref),
+                }
+            )
         items.sort(key=lambda x: x["name"])
         model = get_model()
         classes = sorted(set(model.names.values()))
@@ -1831,6 +2409,7 @@ def list_batch_covers():
                     "name": name,
                     "cover": batch.cover,
                     "count": len(batch.images),
+                    "source": _source_dict(batch.source_ref),
                 }
             )
         return {"batches": covers}

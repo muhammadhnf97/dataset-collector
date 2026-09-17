@@ -463,6 +463,7 @@ function App() {
   const [confirmingRemoveAttrImage, setConfirmingRemoveAttrImage] = useState(false)
   const [confirmingRemoveDatasetBatch, setConfirmingRemoveDatasetBatch] = useState(false)
   const [datasetBatchToRemove, setDatasetBatchToRemove] = useState('')
+  const [confirmingRemoveActiveDataset, setConfirmingRemoveActiveDataset] = useState(false)
   const [splitCount, setSplitCount] = useState(2)
   const [splitConfirmOpen, setSplitConfirmOpen] = useState(false)
   const [deleteBatchConfirmOpen, setDeleteBatchConfirmOpen] = useState(false)
@@ -512,6 +513,25 @@ function App() {
   const [prelabelStats, setPrelabelStats] = useState(null)
   const [prelabelStatsLoading, setPrelabelStatsLoading] = useState(false)
   const [exportFormat, setExportFormat] = useState('tar')
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
+  const exportMenuRef = useRef(null)
+  const [newDatasetMenuOpen, setNewDatasetMenuOpen] = useState(false)
+  const newDatasetMenuRef = useRef(null)
+  const [archives, setArchives] = useState([])
+  const [archivesOpen, setArchivesOpen] = useState(false)
+  const [archiveFormat, setArchiveFormat] = useState('tar')
+  const [archiving, setArchiving] = useState(false)
+  const [importArchiveOpen, setImportArchiveOpen] = useState(false)
+  const [uploadingArchive, setUploadingArchive] = useState(false)
+  const importFileRef = useRef(null)
+  const [restoringExportId, setRestoringExportId] = useState(null)
+  const [confirmingDeleteExport, setConfirmingDeleteExport] = useState(null)
+  const [sources, setSources] = useState([])
+  const [sourceModalOpen, setSourceModalOpen] = useState(false)
+  const [newSourceName, setNewSourceName] = useState('')
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [uploadSourceId, setUploadSourceId] = useState('')
+  const [datasetBatchSources, setDatasetBatchSources] = useState({})
   const [selectedDataset, setSelectedDataset] = useState('')
   const [templates, setTemplates] = useState([])
   const [annotate, setAnnotate] = useState(null)
@@ -542,10 +562,16 @@ function App() {
           source,
           batch: b.name,
           previews: b.cover ? [b.cover] : [],
+          sourceInfo: b.source && typeof b.source === 'object' ? b.source : null,
         }
       })
+      .filter((r) => {
+        if (!sourceFilter) return true
+        if (sourceFilter === 'none') return !r.sourceInfo
+        return r.sourceInfo?.id === Number(sourceFilter)
+      })
       .sort((a, b) => a.source.localeCompare(b.source))
-  }, [batches])
+  }, [batches, sourceFilter])
 
   const datasetActiveImages = useMemo(() => {
     return datasetBatchFilter
@@ -732,6 +758,89 @@ function App() {
     }
   }
 
+  const fetchSources = async () => {
+    try {
+      const response = await fetch('/api/sources')
+      const data = await response.json()
+      setSources(data.sources ?? [])
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const createSource = async (name) => {
+    const trimmed = (name ?? '').trim()
+    if (!trimmed) return
+    try {
+      const response = await fetch('/api/sources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      const data = await response.json()
+      if (response.ok) {
+        setNewSourceName('')
+        setStatus(`Created source ${data.name} · v${data.version}`)
+        fetchSources()
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const deleteSource = async (id) => {
+    try {
+      const response = await fetch(`/api/sources/${id}`, {
+        method: 'DELETE',
+      })
+      if (response.ok) {
+        setStatus('Source deleted (batches untagged)')
+        fetchSources()
+        fetchBatches()
+      } else {
+        const data = await response.json()
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const assignBatchSource = async (batchId, sourceId) => {
+    try {
+      const response = await fetch(`/api/batches/${batchId}/source`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: sourceId }),
+      })
+      const data = await response.json()
+      if (response.ok) {
+        setStatus(
+          data.source
+            ? `Batch ${data.batch} → ${data.source.name} · v${data.source.version}`
+            : `Batch ${data.batch} untagged`,
+        )
+        fetchBatches()
+        fetchSources()
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const sourcesByName = useMemo(() => {
+    const map = {}
+    for (const s of sources) {
+      if (!map[s.name]) map[s.name] = []
+      map[s.name].push(s)
+    }
+    return Object.entries(map)
+  }, [sources])
+
   const doSplit = async () => {
     const label = selectedBatch ? `batch ${selectedBatch}` : 'loose imports'
     setStatus(`Splitting ${label}...`)
@@ -787,6 +896,7 @@ function App() {
           Object.values(imagesData.groups ?? {}).flat(),
         )
         setDatasetImageGroups(imagesData.groups ?? {})
+        setDatasetBatchSources(imagesData.batch_sources ?? {})
         setDatasetAnnotations(annotData.annotations ?? {})
         setDatasetAnnotationTimes(annotData.updated_at ?? {})
       } else {
@@ -1516,6 +1626,27 @@ function App() {
     setDatasetSettingsOpen(true)
   }
 
+  const doRemoveActiveDataset = async () => {
+    setConfirmingRemoveActiveDataset(false)
+    if (!activeDataset) return
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}`,
+        { method: 'DELETE' },
+      )
+      if (!response.ok) {
+        setStatus('Failed: could not remove dataset')
+        return
+      }
+      setStatus(`Deleted dataset ${activeDataset}`)
+      setDatasetSettingsOpen(false)
+      setActiveDataset('')
+      fetchDatasets()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
   const doSaveDatasetSettings = async () => {
     if (!datasetNameEdit.trim()) {
       setStatus('Dataset name is required')
@@ -1552,6 +1683,114 @@ function App() {
       setStatus('Failed: could not reach the server')
     } finally {
       setSavingDatasetSettings(false)
+    }
+  }
+
+  const fetchExports = async () => {
+    try {
+      const response = await fetch('/api/exports')
+      const data = await response.json()
+      if (response.ok) setArchives(data.exports ?? [])
+    } catch {
+      // ignore
+    }
+  }
+
+  const doArchiveDataset = async () => {
+    if (!activeDataset || archiving) return
+    setArchiving(true)
+    setStatus('Creating archive...')
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/archive`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ format: archiveFormat }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail || 'archive failed'}`)
+        return
+      }
+      setStatus(
+        `Archived ${data.archive} (${data.images} images, ${data.annotated} annotated)`,
+      )
+      fetchExports()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setArchiving(false)
+    }
+  }
+
+  const doDeleteExport = async (id) => {
+    setConfirmingDeleteExport(null)
+    try {
+      const response = await fetch(`/api/exports/${id}`, { method: 'DELETE' })
+      if (!response.ok) {
+        setStatus('Failed: could not delete archive')
+        return
+      }
+      setStatus('Archive deleted')
+      fetchExports()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const handleImportArchiveFile = async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    const formData = new FormData()
+    formData.append('file', file)
+    setUploadingArchive(true)
+    setStatus('Uploading and restoring archive...')
+    try {
+      const response = await fetch('/api/exports/import', {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail || 'import failed'}`)
+        return
+      }
+      setStatus(
+        `Restored dataset ${data.dataset} (${data.images} images) from ${data.archive}`,
+      )
+      setImportArchiveOpen(false)
+      fetchExports()
+      await fetchDatasets()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setUploadingArchive(false)
+    }
+  }
+
+  const doRestoreExport = async (id) => {
+    if (restoringExportId) return
+    setRestoringExportId(id)
+    setStatus('Restoring dataset...')
+    try {
+      const response = await fetch(`/api/exports/${id}/restore`, {
+        method: 'POST',
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail || 'restore failed'}`)
+        return
+      }
+      setStatus(`Restored dataset ${data.dataset} (${data.images} images)`)
+      setImportArchiveOpen(false)
+      await fetchDatasets()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setRestoringExportId(null)
     }
   }
 
@@ -1650,6 +1889,7 @@ function App() {
 
   useEffect(() => {
     fetchBatches()
+    fetchSources()
   }, [])
 
   useEffect(() => {
@@ -1667,6 +1907,29 @@ function App() {
     window.addEventListener('mousedown', handleClick)
     return () => window.removeEventListener('mousedown', handleClick)
   }, [prelabelMenuOpen])
+
+  useEffect(() => {
+    if (!exportMenuOpen && !newDatasetMenuOpen) return
+    const handleClick = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setExportMenuOpen(false)
+      }
+      if (
+        newDatasetMenuRef.current &&
+        !newDatasetMenuRef.current.contains(e.target)
+      ) {
+        setNewDatasetMenuOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [exportMenuOpen, newDatasetMenuOpen])
+
+  useEffect(() => {
+    if (activePage === 'archives' || archivesOpen || importArchiveOpen) {
+      fetchExports()
+    }
+  }, [activePage, archivesOpen, importArchiveOpen])
 
   useEffect(() => {
     fetchDatasets()
@@ -1770,6 +2033,9 @@ function App() {
 
     const formData = new FormData()
     formData.append('file', file)
+    if (uploadSourceId) {
+      formData.append('source_id', uploadSourceId)
+    }
 
     setStatus('Uploading image...')
     try {
@@ -1805,7 +2071,9 @@ function App() {
             <p className="mt-1 text-sm text-slate-500">
               {activePage === 'raw_image'
                 ? 'Upload TARs and curate imported, frames, and crops'
-                : 'Organize batches and export datasets'}
+                : activePage === 'datasets'
+                  ? 'Organize batches and export datasets'
+                  : 'Manage stored dataset archives'}
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -1830,6 +2098,17 @@ function App() {
               }`}
             >
               Datasets
+            </button>
+            <button
+              type="button"
+              onClick={() => setActivePage('archives')}
+              className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+                activePage === 'archives'
+                  ? 'bg-indigo-500 text-white shadow'
+                  : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+              }`}
+            >
+              Archives
             </button>
           </div>
         </header>
@@ -2150,6 +2429,20 @@ function App() {
             <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
               {rawSources.length}
             </span>
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 outline-none"
+              title="Filter batches by source"
+            >
+              <option value="">All sources</option>
+              <option value="none">Untagged</option>
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} · v{s.version}
+                </option>
+              ))}
+            </select>
             <input
               ref={tarInputRef}
               type="file"
@@ -2157,11 +2450,32 @@ function App() {
               className="hidden"
               onChange={handleImageChange}
             />
+            <select
+              value={uploadSourceId}
+              onChange={(e) => setUploadSourceId(e.target.value)}
+              className="ml-auto rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-600 outline-none"
+              title="Tag uploaded batches with this source"
+            >
+              <option value="">Upload: no source</option>
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  Upload → {s.name} · v{s.version}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={removeRawMode}
+              onClick={() => setSourceModalOpen(true)}
+              className="flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:opacity-40"
+            >
+              Sources
+            </button>
             <button
               type="button"
               disabled={removeRawMode}
               onClick={() => tarInputRef.current?.click()}
-              className="ml-auto flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <ArchiveIcon className="h-4 w-4" />
               Upload Image
@@ -2215,7 +2529,7 @@ function App() {
             ) : null}
           </div>
           <div className="mt-4 flex max-w-full gap-3 overflow-x-auto overscroll-x-contain p-3">
-            {rawSources.map(({ id, source, batch, previews }) => (
+            {rawSources.map(({ id, source, batch, previews, sourceInfo }) => (
               <button
                 key={source}
                 type="button"
@@ -2262,6 +2576,11 @@ function App() {
                     ✓
                   </div>
                 )}
+                {sourceInfo && (
+                  <div className="absolute left-1.5 top-1.5 rounded bg-indigo-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white shadow">
+                    {sourceInfo.name} · v{sourceInfo.version}
+                  </div>
+                )}
                 <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 text-left text-xs font-medium text-white">
                   {source}
                 </div>
@@ -2277,6 +2596,27 @@ function App() {
                 <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
                   {selectedRawImages.length}
                 </span>
+                <select
+                  value={
+                    rawSources.find((r) => r.source === selectedRaw)
+                      ?.sourceInfo?.id ?? ''
+                  }
+                  onChange={(e) =>
+                    assignBatchSource(
+                      selectedBatchId,
+                      e.target.value ? Number(e.target.value) : null,
+                    )
+                  }
+                  className="rounded-full border border-slate-300 bg-white px-3 py-0.5 text-xs text-slate-600 outline-none"
+                  title="Batch source"
+                >
+                  <option value="">No source</option>
+                  {sources.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} · v{s.version}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="mt-4 rounded-2xl border border-white/60 bg-white/70 p-5 shadow-sm backdrop-blur-sm">
@@ -2457,19 +2797,59 @@ function App() {
               </span>
               <div className="ml-auto flex items-center gap-2">
                 {!removeDatasetMode && !createDatasetOpen && (
-                  <button
-                    type="button"
-                    disabled={creatingDataset}
-                    onClick={() => {
-                      setCreateDatasetOpen(true)
-                      setCreateDatasetName('')
-                      setCreateDatasetTemplate('')
-                    }}
-                    className="flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
-                  >
-                    {!creatingDataset && <PlusIcon className="h-4 w-4" />}
-                    {creatingDataset ? 'Creating...' : 'New dataset'}
-                  </button>
+                  <div ref={newDatasetMenuRef} className="relative">
+                    <button
+                      type="button"
+                      disabled={creatingDataset}
+                      onClick={() => setNewDatasetMenuOpen((v) => !v)}
+                      className="flex items-center gap-2 rounded-full bg-indigo-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
+                    >
+                      {!creatingDataset && <PlusIcon className="h-4 w-4" />}
+                      {creatingDataset ? 'Creating...' : 'New dataset'}
+                      <svg
+                        className={`h-4 w-4 transition-transform ${newDatasetMenuOpen ? 'rotate-180' : ''}`}
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        strokeWidth={2}
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                      </svg>
+                    </button>
+                    {newDatasetMenuOpen && (
+                      <div className="absolute right-0 z-30 mt-1 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewDatasetMenuOpen(false)
+                            setCreateDatasetOpen(true)
+                            setCreateDatasetName('')
+                            setCreateDatasetTemplate('')
+                          }}
+                          className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                        >
+                          <span className="block font-medium">New dataset</span>
+                          <span className="block text-xs text-slate-400">
+                            Create an empty dataset
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewDatasetMenuOpen(false)
+                            setImportArchiveOpen(true)
+                          }}
+                          className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                        >
+                          <span className="block font-medium">Import</span>
+                          <span className="block text-xs text-slate-400">
+                            Restore from a stored archive
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
                 {!removeDatasetMode && !createDatasetOpen && (
                   <button
@@ -2589,7 +2969,7 @@ function App() {
             const groups = datasetBatchFilter
               ? { [datasetBatchFilter]: filteredImages }
               : datasetImageGroups
-            const annotatedCount = filteredImages.filter(
+            const annotatedCount = datasetImages.filter(
               (src) => datasetAnnotations[src] !== undefined,
             ).length
             const currentDataset = datasets.find((d) => d.name === activeDataset)
@@ -2598,97 +2978,67 @@ function App() {
                 ? `${currentDataset.framework}/${currentDataset.model}`.toLowerCase()
                 : ''
             return (
-            <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
-              <div className="flex items-center gap-3">
+            <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
+              <div className="flex items-center gap-3 px-6 py-4">
                 <h2 className="text-lg font-semibold text-slate-800">
                   {activeDataset}
                 </h2>
                 <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                  {annotatedCount} / {filteredImages.length} annotated
+                  {annotatedCount} / {datasetImages.length} annotated
                 </span>
-                {datasetBatches.length > 0 && (
-                  <select
-                    value={datasetBatchFilter ?? datasetBatches[0] ?? ''}
-                    onChange={(e) => setDatasetBatchFilter(e.target.value)}
-                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none"
-                  >
-                    {datasetBatches.map((batch) => (
-                      <option key={batch} value={batch}>
-                        {batch}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                {datasetBatchFilter && (
+                <div className="ml-auto flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setDatasetBatchToRemove(datasetBatchFilter)
-                      setConfirmingRemoveDatasetBatch(true)
-                    }}
-                    className="rounded-full bg-red-500/10 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-500/20"
+                    onClick={openImportBatch}
+                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
                   >
-                    Remove from dataset
+                    Import batch
                   </button>
-                )}
-                <div className="ml-auto flex items-center gap-2">
-                  <div ref={prelabelMenuRef} className="relative">
-                    <div className="flex overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
-                      <button
-                        type="button"
-                        onClick={() => doPrelabel(true)}
-                        disabled={!templatePath || preLabeling}
-                        title="Runs the model and overwrites both the corrected value and the pre-label prediction"
-                        className="px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+                  <div ref={exportMenuRef} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setExportMenuOpen((v) => !v)}
+                      disabled={datasetBatches.length === 0}
+                      className="flex items-center gap-1.5 rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
+                    >
+                      Export
+                      <svg
+                        className={`h-4 w-4 transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}
+                        xmlns="http://www.w3.org/2000/svg"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        strokeWidth={2}
+                        stroke="currentColor"
                       >
-                        {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPrelabelMenuOpen((v) => !v)}
-                        disabled={!templatePath || preLabeling}
-                        className="border-l border-indigo-300 px-2 text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
-                      >
-                        <svg
-                          className={`h-4 w-4 transition-transform ${prelabelMenuOpen ? 'rotate-180' : ''}`}
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          strokeWidth={2}
-                          stroke="currentColor"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-                        </svg>
-                      </button>
-                    </div>
-                    {prelabelMenuOpen && (
-                      <div className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                      </svg>
+                    </button>
+                    {exportMenuOpen && (
+                      <div className="absolute right-0 z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
                         <button
                           type="button"
                           onClick={() => {
-                            setPrelabelMenuOpen(false)
-                            doPrelabel(true)
+                            setExportMenuOpen(false)
+                            setShowExportPanel(true)
                           }}
-                          disabled={!templatePath || preLabeling}
-                          className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50 disabled:opacity-40"
+                          className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
                         >
-                          <span className="block font-medium">Pre-label</span>
+                          <span className="block font-medium">Export dataset</span>
                           <span className="block text-xs text-slate-400">
-                            Overwrites value and pre-label
+                            Train-format archive for the model
                           </span>
                         </button>
                         <button
                           type="button"
                           onClick={() => {
-                            setPrelabelMenuOpen(false)
-                            doPrelabel(false)
+                            setExportMenuOpen(false)
+                            setArchivesOpen(true)
                           }}
-                          disabled={!templatePath || preLabeling}
-                          className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-sky-50 disabled:opacity-40"
+                          className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
                         >
-                          <span className="block font-medium">Pre-label Only</span>
+                          <span className="block font-medium">Archives</span>
                           <span className="block text-xs text-slate-400">
-                            Only updates the pre-label, keeps your value
+                            Restorable snapshots stored on the server
                           </span>
                         </button>
                       </div>
@@ -2701,29 +3051,6 @@ function App() {
                     className="rounded-full border border-amber-300 bg-amber-50 px-4 py-1.5 text-sm font-medium text-amber-600 transition hover:bg-amber-100 disabled:opacity-40"
                   >
                     {prelabelStatsLoading ? 'Loading...' : 'Pre-label Stats'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter)}
-                    disabled={!templatePath || preLabeling}
-                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
-                  >
-                    Correct Attribute
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openImportBatch}
-                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
-                  >
-                    Import batch
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowExportPanel(true)}
-                    disabled={datasetBatches.length === 0}
-                    className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
-                  >
-                    Export dataset
                   </button>
                   <button
                     type="button"
@@ -2754,6 +3081,119 @@ function App() {
                 </div>
               </div>
 
+              {datasetBatches.length > 0 && (
+                <div className="flex items-center gap-3 border-y border-slate-200/70 bg-slate-50/60 px-6 py-3">
+                  <span className="text-sm font-medium text-slate-500">Batch</span>
+                  <select
+                    value={datasetBatchFilter ?? datasetBatches[0] ?? ''}
+                    onChange={(e) => setDatasetBatchFilter(e.target.value)}
+                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none"
+                  >
+                    {datasetBatches.map((batch) => (
+                      <option key={batch} value={batch}>
+                        {batch}
+                        {datasetBatchSources[batch]
+                          ? ` — ${datasetBatchSources[batch].name} · v${datasetBatchSources[batch].version}`
+                          : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                    {
+                      filteredImages.filter(
+                        (src) => datasetAnnotations[src] !== undefined,
+                      ).length
+                    }{' '}
+                    / {filteredImages.length} annotated
+                  </span>
+                  <div className="ml-auto flex items-center gap-2">
+                    <div ref={prelabelMenuRef} className="relative">
+                      <div className="flex overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
+                        <button
+                          type="button"
+                          onClick={() => doPrelabel(true)}
+                          disabled={!templatePath || preLabeling}
+                          title="Runs the model and overwrites both the corrected value and the pre-label prediction"
+                          className="px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+                        >
+                          {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPrelabelMenuOpen((v) => !v)}
+                          disabled={!templatePath || preLabeling}
+                          className="border-l border-indigo-300 px-2 text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+                        >
+                          <svg
+                            className={`h-4 w-4 transition-transform ${prelabelMenuOpen ? 'rotate-180' : ''}`}
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={2}
+                            stroke="currentColor"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                          </svg>
+                        </button>
+                      </div>
+                      {prelabelMenuOpen && (
+                        <div className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPrelabelMenuOpen(false)
+                              doPrelabel(true)
+                            }}
+                            disabled={!templatePath || preLabeling}
+                            className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50 disabled:opacity-40"
+                          >
+                            <span className="block font-medium">Pre-label</span>
+                            <span className="block text-xs text-slate-400">
+                              Overwrites value and pre-label
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPrelabelMenuOpen(false)
+                              doPrelabel(false)
+                            }}
+                            disabled={!templatePath || preLabeling}
+                            className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-sky-50 disabled:opacity-40"
+                          >
+                            <span className="block font-medium">Pre-label Only</span>
+                            <span className="block text-xs text-slate-400">
+                              Only updates the pre-label, keeps your value
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter)}
+                      disabled={!templatePath || preLabeling}
+                      className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
+                    >
+                      Correct Attribute
+                    </button>
+                    {datasetBatchFilter && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDatasetBatchToRemove(datasetBatchFilter)
+                          setConfirmingRemoveDatasetBatch(true)
+                        }}
+                        className="rounded-full bg-red-500/10 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-500/20"
+                      >
+                        Remove current batch
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="px-6 py-5">
               {Object.keys(groups).length === 0 ? (
                 <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
                   No images in this dataset
@@ -2761,8 +3201,14 @@ function App() {
               ) : (
                 Object.entries(groups).map(([batch, images]) => (
                   <div key={batch} className="mt-4">
-                    <h3 className="mb-2 text-sm font-semibold text-slate-700">
+                    <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
                       {batch}
+                      {datasetBatchSources[batch] && (
+                        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-600">
+                          {datasetBatchSources[batch].name} · v
+                          {datasetBatchSources[batch].version}
+                        </span>
+                      )}
                     </h3>
                     <div className="grid grid-cols-6 gap-3">
                       {images.map((src) => {
@@ -2803,10 +3249,76 @@ function App() {
                   </div>
                 ))
               )}
+              </div>
             </section>
             )
           })()}
         </section>
+        )}
+
+        {activePage === 'archives' && (
+          <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold text-slate-800">Archives</h2>
+              <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+                {archives.length}
+              </span>
+            </div>
+            {archives.length === 0 ? (
+              <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
+                No archives stored. Create one from a dataset's Export ▾ menu.
+              </div>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {archives.map((a) => (
+                  <div
+                    key={a.id}
+                    className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-slate-700">
+                        {a.name}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        {a.dataset ?? 'unknown dataset'} ·{' '}
+                        {(a.size / 1024 / 1024).toFixed(1)} MB ·{' '}
+                        {a.counts?.images ?? 0} images,{' '}
+                        {a.counts?.annotated ?? 0} annotated
+                        {a.created_at &&
+                          ` · ${formatRelativeTime(a.created_at)}`}
+                        {!a.exists && ' · file missing'}
+                      </div>
+                    </div>
+                    <div className="ml-auto flex shrink-0 items-center gap-1">
+                      <a
+                        href={`/api/exports/${a.id}/download`}
+                        className="rounded-md px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
+                      >
+                        Download
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => doRestoreExport(a.id)}
+                        disabled={!a.exists || restoringExportId !== null}
+                        className="rounded-md px-2 py-1 text-xs font-medium text-emerald-600 transition hover:bg-emerald-50 disabled:opacity-40"
+                      >
+                        {restoringExportId === a.id
+                          ? 'Restoring...'
+                          : 'Restore'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmingDeleteExport(a)}
+                        className="rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         )}
       </main>
 
@@ -3370,6 +3882,16 @@ function App() {
         />
       )}
 
+      {confirmingRemoveActiveDataset && (
+        <ConfirmModal
+          count={datasetImages.length}
+          title={`Remove ${activeDataset}?`}
+          message="This will remove the dataset and its annotations. Batches and images will remain in Raw Image. This action cannot be undone."
+          onCancel={() => setConfirmingRemoveActiveDataset(false)}
+          onConfirm={doRemoveActiveDataset}
+        />
+      )}
+
       {confirmingRemoveRaws && (
         <ConfirmModal
           count={selectedRawsToRemove.size}
@@ -3517,7 +4039,6 @@ function App() {
               >
                 <option value="tar">tar</option>
                 <option value="zip">zip</option>
-                <option value="tar.gz">tar.gz</option>
                 <option value="rar">rar</option>
               </select>
             </div>
@@ -3807,7 +4328,7 @@ function App() {
           onClick={() => setDatasetSettingsOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-slate-800">
@@ -3856,6 +4377,56 @@ function App() {
                 </select>
               </div>
             </div>
+
+            {datasetBatches.length > 0 && (
+              <div className="mt-6 border-t border-slate-200 pt-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Batches in dataset
+                </h3>
+                <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
+                  {datasetBatches.map((batch) => (
+                    <div
+                      key={batch}
+                      className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                    >
+                      <span className="font-medium text-slate-700">{batch}</span>
+                      <span className="text-xs text-slate-400">
+                        {(datasetImageGroups[batch] ?? []).length} images
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDatasetBatchToRemove(batch)
+                          setConfirmingRemoveDatasetBatch(true)
+                        }}
+                        className="ml-auto rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6 border-t border-slate-200 pt-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-red-400">
+                Danger zone
+              </h3>
+              <div className="mt-3 flex items-center justify-between rounded-lg border border-red-200 bg-red-50/50 px-3 py-2">
+                <span className="text-sm text-slate-700">
+                  Remove this dataset
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingRemoveActiveDataset(true)}
+                  className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-600"
+                >
+                  Remove dataset
+                </button>
+              </div>
+            </div>
+
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
@@ -3879,6 +4450,297 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {sourceModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setSourceModalOpen(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-slate-800">Sources</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Where the images came from. Click a shop to mint its next
+              version — deleting a source only untags its batches.
+            </p>
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <input
+                type="text"
+                value={newSourceName}
+                onChange={(e) => setNewSourceName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') createSource(newSourceName)
+                }}
+                placeholder="New source name (e.g. Shop A)"
+                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => createSource(newSourceName)}
+                disabled={!newSourceName.trim()}
+                className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-600 disabled:opacity-40"
+              >
+                Add source
+              </button>
+            </div>
+            <div className="mt-4 space-y-2">
+              {sourcesByName.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-400">
+                  No sources yet
+                </p>
+              ) : (
+                sourcesByName.map(([name, versions]) => (
+                  <div
+                    key={name}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-slate-700">
+                        {name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => createSource(name)}
+                        className="rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100"
+                        title={`Create ${name} · v${
+                          Math.max(
+                            0,
+                            ...versions.map((v) =>
+                              /^\d+$/.test(v.version)
+                                ? parseInt(v.version, 10)
+                                : 0,
+                            ),
+                          ) + 1
+                        }`}
+                      >
+                        + version
+                      </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {versions.map((s) => (
+                        <span
+                          key={s.id}
+                          className="flex items-center gap-1.5 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-medium text-indigo-700"
+                          title={`${s.batches} batch${
+                            s.batches === 1 ? '' : 'es'
+                          }`}
+                        >
+                          v{s.version}
+                          <span className="text-indigo-400">
+                            {s.batches} batch{s.batches === 1 ? '' : 'es'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => deleteSource(s.id)}
+                            className="ml-0.5 text-indigo-400 transition hover:text-red-500"
+                            title="Delete (untags batches)"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSourceModalOpen(false)}
+              className="mt-5 w-full rounded-lg border border-slate-300 py-2 text-sm text-slate-600 transition hover:bg-slate-100"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {archivesOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setArchivesOpen(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-slate-800">Archives</h2>
+            <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <span className="text-sm text-slate-700">
+                New archive of {activeDataset}
+              </span>
+              <div className="flex items-center gap-2">
+                <select
+                  value={archiveFormat}
+                  onChange={(e) => setArchiveFormat(e.target.value)}
+                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none"
+                >
+                  <option value="tar">tar</option>
+                  <option value="zip">zip</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={doArchiveDataset}
+                  disabled={archiving}
+                  className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-600 disabled:opacity-40"
+                >
+                  {archiving ? 'Creating...' : 'Create archive'}
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 space-y-2">
+              {archives.filter((a) => a.dataset === activeDataset).length ===
+              0 ? (
+                <p className="py-6 text-center text-sm text-slate-400">
+                  No archives for this dataset yet
+                </p>
+              ) : (
+                archives
+                  .filter((a) => a.dataset === activeDataset)
+                  .map((a) => (
+                    <div
+                      key={a.id}
+                      className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-medium text-slate-700">
+                          {a.name}
+                        </div>
+                        <div className="text-xs text-slate-400">
+                          {(a.size / 1024 / 1024).toFixed(1)} MB
+                          {a.created_at &&
+                            ` · ${formatRelativeTime(a.created_at)}`}
+                          {!a.exists && ' · file missing'}
+                        </div>
+                      </div>
+                      <div className="ml-auto flex shrink-0 items-center gap-1">
+                        <a
+                          href={`/api/exports/${a.id}/download`}
+                          className="rounded-md px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
+                        >
+                          Download
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingDeleteExport(a)}
+                          className="rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setArchivesOpen(false)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importArchiveOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setImportArchiveOpen(false)}
+        >
+          <div
+            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-slate-800">
+              Import dataset
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Upload an archive file, or restore one already stored on the
+              server.
+            </p>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".tar,.tar.gz,.tgz,.tar.bz2,.tar.xz,.zip,.rar"
+              className="hidden"
+              onChange={handleImportArchiveFile}
+            />
+            <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <span className="text-sm text-slate-700">
+                Archive file (.tar, .tar.gz, .zip, .rar)
+              </span>
+              <button
+                type="button"
+                onClick={() => importFileRef.current?.click()}
+                disabled={uploadingArchive || restoringExportId !== null}
+                className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-600 disabled:opacity-40"
+              >
+                {uploadingArchive ? 'Uploading...' : 'Choose file'}
+              </button>
+            </div>
+            <div className="mt-4 space-y-2">
+              {archives.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-400">
+                  No archives stored yet
+                </p>
+              ) : (
+                archives.map((a) => (
+                  <div
+                    key={a.id}
+                    className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-slate-700">
+                        {a.name}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        {a.dataset ?? 'unknown dataset'} ·{' '}
+                        {(a.size / 1024 / 1024).toFixed(1)} MB ·{' '}
+                        {a.counts?.images ?? 0} images
+                        {a.created_at &&
+                          ` · ${formatRelativeTime(a.created_at)}`}
+                        {!a.exists && ' · file missing'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => doRestoreExport(a.id)}
+                      disabled={!a.exists || restoringExportId !== null}
+                      className="ml-auto shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-600 disabled:opacity-40"
+                    >
+                      {restoringExportId === a.id ? 'Restoring...' : 'Restore'}
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setImportArchiveOpen(false)}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmingDeleteExport && (
+        <ConfirmModal
+          count={1}
+          title={`Delete ${confirmingDeleteExport.name}?`}
+          message="This permanently deletes the archive file from the server. This action cannot be undone."
+          onCancel={() => setConfirmingDeleteExport(null)}
+          onConfirm={() => doDeleteExport(confirmingDeleteExport.id)}
+        />
       )}
 
       {assignToDatasetOpen && (
