@@ -471,6 +471,10 @@ function DatasetBatchSection({
   refreshKey,
   onImagesLoaded,
   onOpenImage,
+  removeMode,
+  selected,
+  onToggleSelect,
+  portrait,
 }) {
   const [loading, setLoading] = useState(false)
   const [loadedCount, setLoadedCount] = useState(0)
@@ -521,17 +525,24 @@ function DatasetBatchSection({
       {loadedCount === 0 && loading ? (
         <p className="text-xs text-slate-400">Loading images...</p>
       ) : (
-        <div className="grid grid-cols-6 gap-3">
+        <div className={`grid gap-3 ${portrait ? 'grid-cols-8' : 'grid-cols-6'}`}>
           {images.map((src) => {
             const isAnnotated = annotations[src] !== undefined
             const annotatedAgo = formatRelativeTime(annotationTimes[src])
+            const isSelected = selected?.has(src)
             return (
               <button
                 key={src}
                 type="button"
-                onClick={() => onOpenImage(src)}
-                className={`relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
-                  isAnnotated ? 'ring-2 ring-emerald-500' : ''
+                onClick={() =>
+                  removeMode ? onToggleSelect(src) : onOpenImage(src)
+                }
+                className={`group relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
+                  isSelected
+                    ? 'ring-2 ring-red-500'
+                    : isAnnotated
+                      ? 'ring-2 ring-emerald-500'
+                      : ''
                 }`}
               >
                 <img
@@ -539,8 +550,45 @@ function DatasetBatchSection({
                   alt=""
                   loading="lazy"
                   decoding="async"
-                  className="aspect-video w-full object-cover"
+                  className={`w-full object-cover ${portrait ? 'aspect-[9/16]' : 'aspect-video'}`}
                 />
+                {removeMode && (
+                  <span
+                    className={`absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold shadow ${
+                      isSelected
+                        ? 'bg-red-500 text-white'
+                        : 'bg-white/50 text-transparent'
+                    }`}
+                  >
+                    ✓
+                  </span>
+                )}
+                {removeMode && (
+                  <span
+                    role="button"
+                    title="Preview"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onOpenImage(src)
+                    }}
+                    className="absolute bottom-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition group-hover:opacity-100 hover:bg-black/80"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      className="h-3.5 w-3.5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={2}
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
+                      />
+                    </svg>
+                  </span>
+                )}
                 {isAnnotated && (
                   <span className="absolute right-1 top-1 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
                     ✓ Annotated
@@ -626,6 +674,10 @@ function App() {
   const [confirmingRemoveAttrImage, setConfirmingRemoveAttrImage] = useState(false)
   const [confirmingRemoveDatasetBatch, setConfirmingRemoveDatasetBatch] = useState(false)
   const [datasetBatchToRemove, setDatasetBatchToRemove] = useState('')
+  const [datasetRemoveMode, setDatasetRemoveMode] = useState(false)
+  const [datasetGridPortrait, setDatasetGridPortrait] = useState(false)
+  const [selectedDatasetImages, setSelectedDatasetImages] = useState(new Set())
+  const [confirmingRemoveDatasetImages, setConfirmingRemoveDatasetImages] = useState(false)
   const [confirmingRemoveActiveDataset, setConfirmingRemoveActiveDataset] = useState(false)
   const [splitCount, setSplitCount] = useState(2)
   const [splitConfirmOpen, setSplitConfirmOpen] = useState(false)
@@ -1394,6 +1446,82 @@ function App() {
       }
       setStatus(`Removed ${data.removed} image${data.removed === 1 ? '' : 's'} from dataset`)
       await refreshDataset(activeDataset)
+    } catch {
+      setStatus('Failed: could not reach the server')
+    }
+  }
+
+  const toggleDatasetImageSelect = (src) => {
+    setSelectedDatasetImages((prev) => {
+      const next = new Set(prev)
+      if (next.has(src)) {
+        next.delete(src)
+      } else {
+        next.add(src)
+      }
+      return next
+    })
+  }
+
+  const removeSelectedDatasetImages = async () => {
+    setConfirmingRemoveDatasetImages(false)
+    const paths = [...selectedDatasetImages]
+    if (!activeDataset || paths.length === 0) return
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/images/remove`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ images: paths }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setStatus(`Removed ${paths.length} image${paths.length === 1 ? '' : 's'} from dataset`)
+      const pathSet = new Set(paths)
+      const stemByPath = {}
+      for (const [stem, imgs] of Object.entries(datasetImageGroups)) {
+        for (const p of imgs) stemByPath[p] = stem
+      }
+      setDatasetImageGroups((prev) => {
+        const next = {}
+        for (const [k, v] of Object.entries(prev)) {
+          next[k] = v.filter((s) => !pathSet.has(s))
+        }
+        return next
+      })
+      setDatasetBatchStats((prev) => {
+        const next = { ...prev }
+        for (const p of paths) {
+          const stem = stemByPath[p]
+          const cur = next[stem]
+          if (!cur) continue
+          next[stem] = {
+            total: Math.max(0, cur.total - 1),
+            annotated: Math.max(
+              0,
+              cur.annotated - (datasetAnnotations[p] !== undefined ? 1 : 0),
+            ),
+          }
+        }
+        return next
+      })
+      setDatasetAnnotations((prev) => {
+        const next = { ...prev }
+        for (const p of paths) delete next[p]
+        return next
+      })
+      setDatasetAnnotationTimes((prev) => {
+        const next = { ...prev }
+        for (const p of paths) delete next[p]
+        return next
+      })
+      setSelectedDatasetImages(new Set())
+      setDatasetRemoveMode(false)
     } catch {
       setStatus('Failed: could not reach the server')
     }
@@ -2204,6 +2332,11 @@ function App() {
       setDatasetBatchFilter(datasetBatches[0])
     }
   }, [datasetBatches, datasetBatchFilter])
+
+  useEffect(() => {
+    setDatasetRemoveMode(false)
+    setSelectedDatasetImages(new Set())
+  }, [activeDataset])
 
   useEffect(() => {
     if (!annotate) return
@@ -3339,7 +3472,10 @@ function App() {
                   <span className="text-sm font-medium text-slate-500">Batch</span>
                   <select
                     value={datasetBatchFilter ?? datasetBatches[0] ?? ''}
-                    onChange={(e) => setDatasetBatchFilter(e.target.value)}
+                    onChange={(e) => {
+                      setDatasetBatchFilter(e.target.value)
+                      setSelectedDatasetImages(new Set())
+                    }}
                     className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none"
                   >
                     {datasetBatches.map((batch) => (
@@ -3357,6 +3493,22 @@ function App() {
                     / {datasetBatchStats[datasetBatchFilter]?.total ?? 0}{' '}
                     annotated
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setDatasetGridPortrait((v) => !v)}
+                    title={datasetGridPortrait ? 'Switch to landscape grid' : 'Switch to portrait grid'}
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100"
+                  >
+                    {datasetGridPortrait ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <rect x="3" y="7" width="18" height="10" rx="1.5" />
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <rect x="7" y="3" width="10" height="18" rx="1.5" />
+                      </svg>
+                    )}
+                  </button>
                   <div className="ml-auto flex items-center gap-2">
                     <div ref={prelabelMenuRef} className="relative">
                       <div className="flex overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
@@ -3428,6 +3580,22 @@ function App() {
                     >
                       Correct Attribute
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (datasetRemoveMode) {
+                          setSelectedDatasetImages(new Set())
+                        }
+                        setDatasetRemoveMode((v) => !v)
+                      }}
+                      className={`rounded-full border px-4 py-1.5 text-sm font-medium transition ${
+                        datasetRemoveMode
+                          ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-100'
+                          : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {datasetRemoveMode ? 'Cancel' : 'Remove images'}
+                    </button>
                     {datasetBatchFilter && (
                       <button
                         type="button"
@@ -3465,6 +3633,10 @@ function App() {
                     onOpenImage={(src) =>
                       setDatasetModalIndex(datasetActiveImages.indexOf(src))
                     }
+                    removeMode={datasetRemoveMode}
+                    selected={selectedDatasetImages}
+                    onToggleSelect={toggleDatasetImageSelect}
+                    portrait={datasetGridPortrait}
                   />
                 ))
               )}
@@ -4090,6 +4262,38 @@ function App() {
           message="This removes the image from the dataset list only. The original file will not be deleted."
           onCancel={() => setConfirmingRemoveAttrImage(false)}
           onConfirm={removeFromDatasetImage}
+        />
+      )}
+
+      {datasetRemoveMode && selectedDatasetImages.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-slate-200 bg-white/95 px-4 py-2 shadow-xl backdrop-blur">
+          <span className="text-sm font-medium text-slate-700">
+            {selectedDatasetImages.size} selected
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedDatasetImages(new Set())}
+            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmingRemoveDatasetImages(true)}
+            className="rounded-full bg-red-500 px-4 py-1 text-sm font-medium text-white transition hover:bg-red-600"
+          >
+            Remove
+          </button>
+        </div>
+      )}
+
+      {confirmingRemoveDatasetImages && (
+        <ConfirmModal
+          count={selectedDatasetImages.size}
+          title={`Remove ${selectedDatasetImages.size} image${selectedDatasetImages.size === 1 ? '' : 's'} from ${activeDataset}?`}
+          message="This removes the images from the dataset list only. The original files will not be deleted."
+          onCancel={() => setConfirmingRemoveDatasetImages(false)}
+          onConfirm={removeSelectedDatasetImages}
         />
       )}
 

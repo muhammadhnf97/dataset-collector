@@ -1245,9 +1245,14 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
 @app.post("/datasets/{name:path}/images/remove")
 def remove_dataset_image(name: str, payload: dict):
     name = unquote(name)
-    image = (payload.get("image") or "").strip()
-    if not image:
-        raise HTTPException(status_code=400, detail="Image path required")
+    images = payload.get("images")
+    if isinstance(images, list):
+        image_paths = [str(p).strip() for p in images if str(p).strip()]
+    else:
+        single = (payload.get("image") or "").strip()
+        image_paths = [single] if single else []
+    if not image_paths:
+        raise HTTPException(status_code=400, detail="Image path(s) required")
     datasets = load_datasets()
     if name not in datasets:
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -1259,14 +1264,19 @@ def remove_dataset_image(name: str, payload: dict):
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
-        db_image = db.query(DbImage).filter_by(path=image).first()
-        if db_dataset and db_image:
-            removed += db.query(DbDatasetImage).filter_by(
-                dataset_id=db_dataset.id, image_id=db_image.id
-            ).delete()
-            removed += db.query(DbAnnotation).filter_by(
-                dataset_id=db_dataset.id, image_id=db_image.id
-            ).delete()
+        db_images = (
+            db.query(DbImage).filter(DbImage.path.in_(image_paths)).all()
+        )
+        if db_dataset and db_images:
+            image_ids = [img.id for img in db_images]
+            removed += db.query(DbDatasetImage).filter(
+                DbDatasetImage.dataset_id == db_dataset.id,
+                DbDatasetImage.image_id.in_(image_ids),
+            ).delete(synchronize_session=False)
+            removed += db.query(DbAnnotation).filter(
+                DbAnnotation.dataset_id == db_dataset.id,
+                DbAnnotation.image_id.in_(image_ids),
+            ).delete(synchronize_session=False)
             db.commit()
     finally:
         db.close()
