@@ -645,6 +645,8 @@ function DatasetSimilarView({
   onOpenImage,
   onKeepRest,
   onKeepRestAll,
+  threshold,
+  onThresholdChange,
   portrait,
 }) {
   const [expanded, setExpanded] = useState(new Set())
@@ -692,37 +694,50 @@ function DatasetSimilarView({
 
   return (
     <div>
+      <div className="mb-3 flex items-center gap-3 text-sm text-slate-500">
+        <span>
+          {clusters.length} group{clusters.length === 1 ? '' : 's'} ·{' '}
+          {clusters.reduce((n, c) => n + c.length, 0)} images
+        </span>
+        <select
+          value={threshold}
+          onChange={(e) => onThresholdChange(Number(e.target.value))}
+          title="Similarity sensitivity — higher groups more loosely"
+          className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-xs font-medium text-slate-600 outline-none"
+        >
+          <option value={4}>Strict</option>
+          <option value={6}>Balanced</option>
+          <option value={10}>Loose</option>
+          <option value={14}>Very loose</option>
+        </select>
+        {clusters.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={() =>
+                setExpanded(
+                  expanded.size === clusters.length
+                    ? new Set()
+                    : new Set(clusters.map((c) => c[0])),
+                )
+              }
+              className="rounded-full border border-slate-300 bg-white px-3 py-0.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+            >
+              {expanded.size === clusters.length ? 'Collapse all' : 'Expand all'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onKeepRestAll(clusters)}
+              className="rounded-full border border-red-300 bg-red-50 px-3 py-0.5 text-xs font-medium text-red-600 transition hover:bg-red-100"
+            >
+              Keep 1 per group, select rest
+            </button>
+          </>
+        )}
+      </div>
       {clusters.length === 0 && (
         <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
-          No near-duplicate images found
-        </div>
-      )}
-      {clusters.length > 0 && (
-        <div className="mb-3 flex items-center gap-3 text-sm text-slate-500">
-          <span>
-            {clusters.length} group{clusters.length === 1 ? '' : 's'} ·{' '}
-            {clusters.reduce((n, c) => n + c.length, 0)} images
-          </span>
-          <button
-            type="button"
-            onClick={() =>
-              setExpanded(
-                expanded.size === clusters.length
-                  ? new Set()
-                  : new Set(clusters.map((c) => c[0])),
-              )
-            }
-            className="rounded-full border border-slate-300 bg-white px-3 py-0.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
-          >
-            {expanded.size === clusters.length ? 'Collapse all' : 'Expand all'}
-          </button>
-          <button
-            type="button"
-            onClick={() => onKeepRestAll(clusters)}
-            className="rounded-full border border-red-300 bg-red-50 px-3 py-0.5 text-xs font-medium text-red-600 transition hover:bg-red-100"
-          >
-            Keep 1 per group, select rest
-          </button>
+          No near-duplicate images found — try a looser sensitivity
         </div>
       )}
       <div className={gridCls}>
@@ -903,6 +918,7 @@ function App() {
   const [datasetGridPortrait, setDatasetGridPortrait] = useState(false)
   const [similarView, setSimilarView] = useState(null)
   const [similarLoading, setSimilarLoading] = useState(false)
+  const [similarThreshold, setSimilarThreshold] = useState(6)
   const [selectedDatasetImages, setSelectedDatasetImages] = useState(new Set())
   const [confirmingRemoveDatasetImages, setConfirmingRemoveDatasetImages] = useState(false)
   const [confirmingRemoveActiveDataset, setConfirmingRemoveActiveDataset] = useState(false)
@@ -1681,13 +1697,14 @@ function App() {
     }
   }
 
-  const fetchSimilar = async () => {
+  const fetchSimilar = async (threshold) => {
     if (!activeDataset || !datasetBatchFilter) return
+    const t = threshold ?? similarThreshold
     const batchName = datasetBatchFilter.replace(/^raw-images_/, '')
     setSimilarLoading(true)
     try {
       const response = await fetch(
-        `/api/datasets/${encodeURIComponent(activeDataset)}/images/similar?batch=${encodeURIComponent(batchName)}`,
+        `/api/datasets/${encodeURIComponent(activeDataset)}/images/similar?batch=${encodeURIComponent(batchName)}&threshold=${t}`,
       )
       const data = await response.json()
       if (!response.ok) {
@@ -2655,7 +2672,6 @@ function App() {
       const group = attrAnnotate.attributes[attrAnnotate.attrIndex]
       if (!group) return
       if (e.key === 'Escape') {
-        applyAttrValue(0, false, false)
         setAttrAnnotate(null)
       }
       if (e.key === 'ArrowLeft') {
@@ -3932,6 +3948,11 @@ function App() {
                   }
                   onKeepRest={selectClusterRest}
                   onKeepRestAll={selectAllClusterRest}
+                  threshold={similarThreshold}
+                  onThresholdChange={(t) => {
+                    setSimilarThreshold(t)
+                    fetchSimilar(t)
+                  }}
                   portrait={datasetGridPortrait}
                 />
               ) : visibleStems.length === 0 ? (
@@ -4685,12 +4706,50 @@ function App() {
             className="w-full max-w-4xl max-h-[80vh] overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-xl backdrop-blur-sm"
             onClick={(e) => e.stopPropagation()}
           >
+            {(() => {
+              const sortedAttrs = [...prelabelStats.attributes].sort(
+                (a, b) => a.accuracy - b.accuracy,
+              )
+              const meanAcc =
+                sortedAttrs.reduce((n, a) => n + a.accuracy, 0) /
+                Math.max(1, sortedAttrs.length)
+              const weakCount = sortedAttrs.filter(
+                (a) => a.accuracy < 0.6,
+              ).length
+              const metricBar = (v) => (
+                <div className="flex items-center gap-2">
+                  <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className={`h-full rounded-full ${
+                        v >= 0.8
+                          ? 'bg-emerald-500'
+                          : v >= 0.6
+                            ? 'bg-amber-400'
+                            : 'bg-red-400'
+                      }`}
+                      style={{ width: `${Math.min(100, v * 100)}%` }}
+                    />
+                  </div>
+                  <span className="w-12 text-xs tabular-nums text-slate-600">
+                    {(v * 100).toFixed(1)}%
+                  </span>
+                </div>
+              )
+              return (
+                <>
             <div className="border-b border-slate-200 p-4">
               <h3 className="text-lg font-semibold text-slate-800">
                 Pre-label stats for {prelabelStats.dataset}
               </h3>
               <p className="text-sm text-slate-500">
-                {prelabelStats.total} pre-labeled images
+                {prelabelStats.total} pre-labeled images · mean accuracy{' '}
+                {(meanAcc * 100).toFixed(1)}%
+                {weakCount > 0 && (
+                  <span className="text-red-500">
+                    {' '}
+                    · {weakCount} attribute{weakCount === 1 ? '' : 's'} below 60%
+                  </span>
+                )}
               </p>
             </div>
             <div className="max-h-[60vh] overflow-auto p-4">
@@ -4708,23 +4767,26 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {prelabelStats.attributes.map((attr) => (
+                  {sortedAttrs.map((attr) => (
                     <tr key={attr.index} className="border-b border-slate-100">
                       <td className="py-2 pr-4 font-medium text-slate-800">
                         {attr.name}
                       </td>
-                      <td className="py-2 pr-4">{(attr.precision * 100).toFixed(1)}%</td>
-                      <td className="py-2 pr-4">{(attr.recall * 100).toFixed(1)}%</td>
-                      <td className="py-2 pr-4">{(attr.accuracy * 100).toFixed(1)}%</td>
-                      <td className="py-2 pr-4 text-right">{attr.tp}</td>
-                      <td className="py-2 pr-4 text-right">{attr.fp}</td>
-                      <td className="py-2 pr-4 text-right">{attr.fn}</td>
-                      <td className="py-2 pr-4 text-right">{attr.tn}</td>
+                      <td className="py-2 pr-4">{metricBar(attr.precision)}</td>
+                      <td className="py-2 pr-4">{metricBar(attr.recall)}</td>
+                      <td className="py-2 pr-4">{metricBar(attr.accuracy)}</td>
+                      <td className="py-2 pr-4 text-right text-xs tabular-nums text-slate-400">{attr.tp}</td>
+                      <td className="py-2 pr-4 text-right text-xs tabular-nums text-slate-400">{attr.fp}</td>
+                      <td className="py-2 pr-4 text-right text-xs tabular-nums text-slate-400">{attr.fn}</td>
+                      <td className="py-2 pr-4 text-right text-xs tabular-nums text-slate-400">{attr.tn}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+                </>
+              )
+            })()}
             <div className="border-t border-slate-200 p-4 text-right">
               <button
                 type="button"
