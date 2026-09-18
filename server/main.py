@@ -1284,6 +1284,115 @@ def remove_dataset_image(name: str, payload: dict):
     return {"removed": removed}
 
 
+_PHASH_CACHE = {}
+
+
+def _phash64(path: Path):
+    import cv2
+    import numpy as np
+
+    img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return None
+    img = cv2.resize(img, (32, 32), interpolation=cv2.INTER_AREA).astype(np.float32)
+    low = cv2.dct(img)[:8, :8].flatten()
+    med = np.median(low[1:])
+    h = 0
+    for b in low > med:
+        h = (h << 1) | int(b)
+    return h
+
+
+def _cluster_hashes(items, threshold):
+    import numpy as np
+
+    parent = list(range(len(items)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    hashes = np.array([h for _, h in items], dtype=np.uint64)
+    hash_bytes = hashes.view(np.uint8).reshape(len(items), 8)
+    for i in range(len(items)):
+        dist = np.unpackbits(np.bitwise_xor(hash_bytes[i], hash_bytes), axis=1).sum(axis=1)
+        for j in np.nonzero(dist <= threshold)[0]:
+            j = int(j)
+            if j > i:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    groups = {}
+    for i in range(len(items)):
+        groups.setdefault(find(i), []).append(items[i][0])
+    return list(groups.values())
+
+
+@app.get("/datasets/{name:path}/images/similar")
+def dataset_similar_images(name: str, batch: str, threshold: int = 6):
+    name = unquote(name)
+    batch_name = Path(unquote(batch)).name
+    datasets = load_datasets()
+    if name not in datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    if not datasets[name].get("dir"):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        paths = [
+            row.path
+            for row in db.query(DbImage)
+            .join(DbBatch, DbImage.batch_id == DbBatch.id)
+            .join(DbDatasetImage, DbImage.id == DbDatasetImage.image_id)
+            .filter(DbDatasetImage.dataset_id == db_dataset.id)
+            .filter(DbBatch.name == batch_name)
+            .order_by(DbImage.path)
+            .all()
+        ]
+    finally:
+        db.close()
+
+    uploads_root = UPLOADS_DIR.resolve()
+    items = []
+    for p in paths:
+        target = (UPLOADS_DIR / p.removeprefix("/uploads/")).resolve()
+        if not target.is_relative_to(uploads_root) or not target.is_file():
+            continue
+        mtime = target.stat().st_mtime_ns
+        cached = _PHASH_CACHE.get(str(target))
+        if cached and cached[0] == mtime:
+            h = cached[1]
+        else:
+            h = _phash64(target)
+            if h is not None:
+                _PHASH_CACHE[str(target)] = (mtime, h)
+        if h is not None:
+            items.append((p, h))
+
+    clusters_raw = _cluster_hashes(items, max(0, min(32, threshold)))
+    clusters = sorted(
+        (sorted(c) for c in clusters_raw if len(c) >= 2),
+        key=len,
+        reverse=True,
+    )
+    clustered = {p for c in clusters for p in c}
+    singles = [p for p, _ in items if p not in clustered]
+    return {
+        "dataset": name,
+        "batch": batch_name,
+        "hashed": len(items),
+        "clusters": clusters,
+        "singles": singles,
+    }
+
+
 @app.post("/datasets/{name:path}/batches/{batch:path}/remove")
 def remove_dataset_batch(name: str, batch: str):
     name = unquote(name)

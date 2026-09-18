@@ -460,6 +460,84 @@ function formatRelativeTime(dateString) {
 
 const DATASET_PAGE_LIMIT = 200
 
+function DatasetImageThumb({
+  src,
+  isAnnotated,
+  annotatedAgo,
+  selectable,
+  isSelected,
+  portrait,
+  onOpen,
+  onToggle,
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => (selectable ? onToggle(src) : onOpen(src))}
+      className={`group relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
+        isSelected
+          ? 'ring-2 ring-red-500'
+          : isAnnotated
+            ? 'ring-2 ring-emerald-500'
+            : ''
+      }`}
+    >
+      <img
+        src={`/api${src}`}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        className={`w-full object-cover ${portrait ? 'aspect-[9/16]' : 'aspect-video'}`}
+      />
+      {selectable && (
+        <span
+          className={`absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold shadow ${
+            isSelected
+              ? 'bg-red-500 text-white'
+              : 'bg-white/50 text-transparent'
+          }`}
+        >
+          ✓
+        </span>
+      )}
+      {selectable && (
+        <span
+          role="button"
+          title="Preview"
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpen(src)
+          }}
+          className="absolute bottom-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition group-hover:opacity-100 hover:bg-black/80"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-3.5 w-3.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={2}
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
+            />
+          </svg>
+        </span>
+      )}
+      {isAnnotated && (
+        <span className="absolute right-1 top-1 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+          ✓ Annotated
+          {annotatedAgo && (
+            <span className="font-normal opacity-90">· {annotatedAgo}</span>
+          )}
+        </span>
+      )}
+    </button>
+  )
+}
+
 function DatasetBatchSection({
   dataset,
   stem,
@@ -526,82 +604,19 @@ function DatasetBatchSection({
         <p className="text-xs text-slate-400">Loading images...</p>
       ) : (
         <div className={`grid gap-3 ${portrait ? 'grid-cols-8' : 'grid-cols-6'}`}>
-          {images.map((src) => {
-            const isAnnotated = annotations[src] !== undefined
-            const annotatedAgo = formatRelativeTime(annotationTimes[src])
-            const isSelected = selected?.has(src)
-            return (
-              <button
-                key={src}
-                type="button"
-                onClick={() =>
-                  removeMode ? onToggleSelect(src) : onOpenImage(src)
-                }
-                className={`group relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
-                  isSelected
-                    ? 'ring-2 ring-red-500'
-                    : isAnnotated
-                      ? 'ring-2 ring-emerald-500'
-                      : ''
-                }`}
-              >
-                <img
-                  src={`/api${src}`}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                  className={`w-full object-cover ${portrait ? 'aspect-[9/16]' : 'aspect-video'}`}
-                />
-                {removeMode && (
-                  <span
-                    className={`absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold shadow ${
-                      isSelected
-                        ? 'bg-red-500 text-white'
-                        : 'bg-white/50 text-transparent'
-                    }`}
-                  >
-                    ✓
-                  </span>
-                )}
-                {removeMode && (
-                  <span
-                    role="button"
-                    title="Preview"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onOpenImage(src)
-                    }}
-                    className="absolute bottom-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition group-hover:opacity-100 hover:bg-black/80"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-3.5 w-3.5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      strokeWidth={2}
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"
-                      />
-                    </svg>
-                  </span>
-                )}
-                {isAnnotated && (
-                  <span className="absolute right-1 top-1 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
-                    ✓ Annotated
-                    {annotatedAgo && (
-                      <span className="font-normal opacity-90">
-                        · {annotatedAgo}
-                      </span>
-                    )}
-                  </span>
-                )}
-              </button>
-            )
-          })}
+          {images.map((src) => (
+            <DatasetImageThumb
+              key={src}
+              src={src}
+              isAnnotated={annotations[src] !== undefined}
+              annotatedAgo={formatRelativeTime(annotationTimes[src])}
+              selectable={removeMode}
+              isSelected={selected?.has(src)}
+              portrait={portrait}
+              onOpen={onOpenImage}
+              onToggle={onToggleSelect}
+            />
+          ))}
         </div>
       )}
       {hasMore && (
@@ -615,6 +630,216 @@ function DatasetBatchSection({
             ? 'Loading...'
             : `Load more (${loadedCount} / ${total})`}
         </button>
+      )}
+    </div>
+  )
+}
+
+function DatasetSimilarView({
+  clusters,
+  singles,
+  annotations,
+  annotationTimes,
+  selected,
+  onToggleSelect,
+  onOpenImage,
+  onKeepRest,
+  onKeepRestAll,
+  portrait,
+}) {
+  const [expanded, setExpanded] = useState(new Set())
+  const aspectCls = portrait ? 'aspect-[9/16]' : 'aspect-video'
+  const gridCls = `grid gap-3 ${portrait ? 'grid-cols-8' : 'grid-cols-6'}`
+
+  const toggleExpand = (key) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
+
+  const renderThumb = (src) => (
+    <DatasetImageThumb
+      key={src}
+      src={src}
+      isAnnotated={annotations[src] !== undefined}
+      annotatedAgo={formatRelativeTime(annotationTimes[src])}
+      selectable
+      isSelected={selected?.has(src)}
+      portrait={portrait}
+      onOpen={onOpenImage}
+      onToggle={onToggleSelect}
+    />
+  )
+
+  const chevron = (open) => (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={2}
+      stroke="currentColor"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+    </svg>
+  )
+
+  return (
+    <div>
+      {clusters.length === 0 && (
+        <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
+          No near-duplicate images found
+        </div>
+      )}
+      {clusters.length > 0 && (
+        <div className="mb-3 flex items-center gap-3 text-sm text-slate-500">
+          <span>
+            {clusters.length} group{clusters.length === 1 ? '' : 's'} ·{' '}
+            {clusters.reduce((n, c) => n + c.length, 0)} images
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              setExpanded(
+                expanded.size === clusters.length
+                  ? new Set()
+                  : new Set(clusters.map((c) => c[0])),
+              )
+            }
+            className="rounded-full border border-slate-300 bg-white px-3 py-0.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+          >
+            {expanded.size === clusters.length ? 'Collapse all' : 'Expand all'}
+          </button>
+          <button
+            type="button"
+            onClick={() => onKeepRestAll(clusters)}
+            className="rounded-full border border-red-300 bg-red-50 px-3 py-0.5 text-xs font-medium text-red-600 transition hover:bg-red-100"
+          >
+            Keep 1 per group, select rest
+          </button>
+        </div>
+      )}
+      <div className={gridCls}>
+        {clusters.map((cluster) => {
+          const cover = cluster[0]
+          const isOpen = expanded.has(cover)
+          const selCount = cluster.reduce(
+            (n, p) => n + (selected?.has(p) ? 1 : 0),
+            0,
+          )
+          if (isOpen) {
+            return (
+              <div
+                key={cover}
+                className="col-span-full rounded-xl border border-violet-200 bg-violet-50/40 p-3"
+              >
+                <div className="mb-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(cover)}
+                    className="flex h-6 w-6 items-center justify-center rounded-full text-slate-500 transition hover:bg-violet-100"
+                  >
+                    {chevron(true)}
+                  </button>
+                  <span className="text-sm font-semibold text-slate-700">
+                    {cluster.length} similar
+                  </span>
+                  {selCount > 0 && (
+                    <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white">
+                      {selCount} selected
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onKeepRest(cluster)}
+                    className="rounded-full border border-red-300 bg-red-50 px-3 py-0.5 text-xs font-medium text-red-600 transition hover:bg-red-100"
+                  >
+                    Keep 1, select rest
+                  </button>
+                </div>
+                <div className={gridCls}>{cluster.map(renderThumb)}</div>
+              </div>
+            )
+          }
+          return (
+            <div key={cover} className="relative">
+              {cluster.length > 1 && (
+                <>
+                  <img
+                    src={`/api${cluster[1]}`}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className={`absolute inset-0 w-full rotate-2 rounded-lg object-cover shadow ${aspectCls}`}
+                  />
+                  <img
+                    src={`/api${cluster[2] ?? cluster[1]}`}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className={`absolute inset-0 w-full -rotate-2 rounded-lg object-cover shadow ${aspectCls}`}
+                  />
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => toggleExpand(cover)}
+                className={`group relative block w-full overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
+                  selCount === cluster.length
+                    ? 'ring-2 ring-red-500'
+                    : selCount > 0
+                      ? 'ring-2 ring-red-300'
+                      : annotations[cover] !== undefined
+                        ? 'ring-2 ring-emerald-500'
+                        : ''
+                }`}
+              >
+                <img
+                  src={`/api${cover}`}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className={`w-full object-cover ${aspectCls}`}
+                />
+                <span className="absolute left-1 top-1 rounded-full bg-violet-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                  {cluster.length} similar
+                </span>
+                {selCount > 0 && (
+                  <span className="absolute bottom-1 left-1 rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+                    {selCount} selected
+                  </span>
+                )}
+                <span className="absolute bottom-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white transition group-hover:bg-black/80">
+                  {chevron(false)}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => onKeepRest(cluster)}
+                className="mt-1.5 w-full rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 transition hover:bg-red-100"
+              >
+                Keep 1, select rest
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      {singles.length > 0 && (
+        <div className="mt-6">
+          <h3 className="mb-2 text-sm font-semibold text-slate-700">
+            Unique images
+            <span className="ml-2 text-xs font-normal text-slate-400">
+              {singles.length}
+            </span>
+          </h3>
+          <div className={gridCls}>{singles.map(renderThumb)}</div>
+        </div>
       )}
     </div>
   )
@@ -676,6 +901,8 @@ function App() {
   const [datasetBatchToRemove, setDatasetBatchToRemove] = useState('')
   const [datasetRemoveMode, setDatasetRemoveMode] = useState(false)
   const [datasetGridPortrait, setDatasetGridPortrait] = useState(false)
+  const [similarView, setSimilarView] = useState(null)
+  const [similarLoading, setSimilarLoading] = useState(false)
   const [selectedDatasetImages, setSelectedDatasetImages] = useState(new Set())
   const [confirmingRemoveDatasetImages, setConfirmingRemoveDatasetImages] = useState(false)
   const [confirmingRemoveActiveDataset, setConfirmingRemoveActiveDataset] = useState(false)
@@ -865,10 +1092,13 @@ function App() {
   }, [datasetBatchStats])
 
   const datasetActiveImages = useMemo(() => {
+    if (similarView) {
+      return [...similarView.clusters.flat(), ...similarView.singles]
+    }
     return datasetBatchFilter
       ? (datasetImageGroups[datasetBatchFilter] ?? [])
       : datasetImages
-  }, [datasetBatchFilter, datasetImageGroups, datasetImages])
+  }, [similarView, datasetBatchFilter, datasetImageGroups, datasetImages])
 
   const handleDatasetImagesLoaded = (stem, images, replace) => {
     setDatasetImageGroups((prev) => ({
@@ -1451,6 +1681,41 @@ function App() {
     }
   }
 
+  const fetchSimilar = async () => {
+    if (!activeDataset || !datasetBatchFilter) return
+    const batchName = datasetBatchFilter.replace(/^raw-images_/, '')
+    setSimilarLoading(true)
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/images/similar?batch=${encodeURIComponent(batchName)}`,
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setSimilarView({ clusters: data.clusters, singles: data.singles })
+      setSelectedDatasetImages(new Set())
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setSimilarLoading(false)
+    }
+  }
+
+  const selectClusterRest = (cluster) => {
+    setSelectedDatasetImages(
+      (prev) => new Set([...prev, ...cluster.slice(1)]),
+    )
+  }
+
+  const selectAllClusterRest = (clusters) => {
+    setSelectedDatasetImages(
+      (prev) =>
+        new Set([...prev, ...clusters.flatMap((c) => c.slice(1))]),
+    )
+  }
+
   const toggleDatasetImageSelect = (src) => {
     setSelectedDatasetImages((prev) => {
       const next = new Set(prev)
@@ -1497,7 +1762,7 @@ function App() {
       setDatasetBatchStats((prev) => {
         const next = { ...prev }
         for (const p of paths) {
-          const stem = stemByPath[p]
+          const stem = stemByPath[p] ?? datasetBatchFilter
           const cur = next[stem]
           if (!cur) continue
           next[stem] = {
@@ -1519,6 +1784,26 @@ function App() {
         const next = { ...prev }
         for (const p of paths) delete next[p]
         return next
+      })
+      setSimilarView((prev) => {
+        if (!prev) return prev
+        const clusters = []
+        const extraSingles = []
+        for (const c of prev.clusters) {
+          const kept = c.filter((p) => !pathSet.has(p))
+          if (kept.length >= 2) {
+            clusters.push(kept)
+          } else if (kept.length === 1) {
+            extraSingles.push(kept[0])
+          }
+        }
+        return {
+          clusters,
+          singles: [
+            ...prev.singles.filter((p) => !pathSet.has(p)),
+            ...extraSingles,
+          ],
+        }
       })
       setSelectedDatasetImages(new Set())
       setDatasetRemoveMode(false)
@@ -2336,6 +2621,7 @@ function App() {
   useEffect(() => {
     setDatasetRemoveMode(false)
     setSelectedDatasetImages(new Set())
+    setSimilarView(null)
   }, [activeDataset])
 
   useEffect(() => {
@@ -3475,6 +3761,7 @@ function App() {
                     onChange={(e) => {
                       setDatasetBatchFilter(e.target.value)
                       setSelectedDatasetImages(new Set())
+                      setSimilarView(null)
                     }}
                     className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none"
                   >
@@ -3596,6 +3883,25 @@ function App() {
                     >
                       {datasetRemoveMode ? 'Cancel' : 'Remove images'}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        similarView ? setSimilarView(null) : fetchSimilar()
+                      }
+                      disabled={similarLoading || !datasetBatchFilter}
+                      title="Group near-duplicate images together for review"
+                      className={`rounded-full border px-4 py-1.5 text-sm font-medium transition disabled:opacity-40 ${
+                        similarView
+                          ? 'border-violet-300 bg-violet-50 text-violet-600 hover:bg-violet-100'
+                          : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {similarLoading
+                        ? 'Analyzing...'
+                        : similarView
+                          ? 'Exit similar'
+                          : 'Group similar'}
+                    </button>
                     {datasetBatchFilter && (
                       <button
                         type="button"
@@ -3613,7 +3919,22 @@ function App() {
               )}
 
               <div className="px-6 py-5">
-              {visibleStems.length === 0 ? (
+              {similarView ? (
+                <DatasetSimilarView
+                  clusters={similarView.clusters}
+                  singles={similarView.singles}
+                  annotations={datasetAnnotations}
+                  annotationTimes={datasetAnnotationTimes}
+                  selected={selectedDatasetImages}
+                  onToggleSelect={toggleDatasetImageSelect}
+                  onOpenImage={(src) =>
+                    setDatasetModalIndex(datasetActiveImages.indexOf(src))
+                  }
+                  onKeepRest={selectClusterRest}
+                  onKeepRestAll={selectAllClusterRest}
+                  portrait={datasetGridPortrait}
+                />
+              ) : visibleStems.length === 0 ? (
                 <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
                   No images in this dataset
                 </div>
@@ -4265,7 +4586,7 @@ function App() {
         />
       )}
 
-      {datasetRemoveMode && selectedDatasetImages.size > 0 && (
+      {(datasetRemoveMode || similarView) && selectedDatasetImages.size > 0 && (
         <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-slate-200 bg-white/95 px-4 py-2 shadow-xl backdrop-blur">
           <span className="text-sm font-medium text-slate-700">
             {selectedDatasetImages.size} selected
