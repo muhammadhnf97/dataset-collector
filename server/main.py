@@ -1671,15 +1671,18 @@ def load_annotation_times(dir_name: str):
         if not db_dataset:
             return {}
         result = {}
-        for path, updated_at in (
-            db.query(DbImage.path, DbAnnotation.updated_at)
+        last_attrs = {}
+        for path, updated_at, last_attr in (
+            db.query(DbImage.path, DbAnnotation.updated_at, DbAnnotation.last_attr)
             .join(DbAnnotation, DbImage.id == DbAnnotation.image_id)
             .filter(DbAnnotation.dataset_id == db_dataset.id)
             .all()
         ):
             if updated_at:
                 result[path] = updated_at.isoformat() + "Z"
-        return result
+            if last_attr is not None:
+                last_attrs[path] = last_attr
+        return result, last_attrs
     finally:
         db.close()
 
@@ -1692,10 +1695,12 @@ def get_dataset_annotations(name: str):
     dir_name = datasets[name].get("dir")
     if not dir_name:
         raise HTTPException(status_code=404, detail="Dataset not found")
+    updated_at, last_attr = load_annotation_times(dir_name)
     return {
         "dataset": name,
         "annotations": load_annotations(dir_name),
-        "updated_at": load_annotation_times(dir_name),
+        "updated_at": updated_at,
+        "last_attr": last_attr,
     }
 
 
@@ -1717,19 +1722,26 @@ def set_dataset_annotation(name: str, payload: dict):
         if not db_image:
             raise HTTPException(status_code=404, detail="Image not found")
 
-        stmt = insert(DbAnnotation).values(
-            dataset_id=db_dataset.id,
-            image_id=db_image.id,
-            values=values,
-            updated_by="root",
-        )
+        attr_index = payload.get("attr_index")
+        insert_values = {
+            "dataset_id": db_dataset.id,
+            "image_id": db_image.id,
+            "values": values,
+            "updated_by": "root",
+        }
+        if isinstance(attr_index, int) and not isinstance(attr_index, bool):
+            insert_values["last_attr"] = attr_index
+        stmt = insert(DbAnnotation).values(**insert_values)
+        set_map = {
+            "values": stmt.excluded["values"],
+            "updated_by": stmt.excluded["updated_by"],
+            "updated_at": datetime.utcnow(),
+        }
+        if "last_attr" in insert_values:
+            set_map["last_attr"] = stmt.excluded["last_attr"]
         stmt = stmt.on_conflict_do_update(
             index_elements=["dataset_id", "image_id"],
-            set_={
-                "values": stmt.excluded["values"],
-                "updated_by": stmt.excluded["updated_by"],
-                "updated_at": datetime.utcnow(),
-            },
+            set_=set_map,
         )
         db.execute(stmt)
         db.commit()
@@ -1741,10 +1753,11 @@ def set_dataset_annotation(name: str, payload: dict):
 def _attribute_labels(attributes, vector_length):
     labels = [f"Attribute {i}" for i in range(vector_length)]
     for group in attributes:
+        options = group.get("option_aliases") or group.get("options", [])
+        group_label = group.get("alias") or group["name"]
         for pos, idx in enumerate(group.get("indices", [])):
             if 0 <= idx < vector_length:
-                options = group.get("options", [])
-                labels[idx] = options[pos] if pos < len(options) else f"{group['name']} {pos}"
+                labels[idx] = options[pos] if pos < len(options) else f"{group_label} {pos}"
     return labels
 
 

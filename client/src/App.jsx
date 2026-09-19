@@ -196,9 +196,9 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, at
               )
             }
             return attributes.map((group) => {
-              const selected = (group.options ?? []).filter(
-                (_, i) => values[group.indices[i]] === 1,
-              )
+              const selected = (group.options ?? [])
+                .map((opt, i) => group.option_aliases?.[i] ?? opt)
+                .filter((_, i) => values[group.indices[i]] === 1)
               const hasValue = selected.length > 0
               return (
                 <div
@@ -211,7 +211,7 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, at
                     }`}
                   />
                   <span className="font-semibold text-slate-500">
-                    {group.name}
+                    {group.alias ?? group.name}
                   </span>{' '}
                   <span
                     className={`font-medium ${
@@ -464,6 +464,7 @@ function DatasetImageThumb({
   src,
   isAnnotated,
   annotatedAgo,
+  isLastEdited,
   selectable,
   isSelected,
   portrait,
@@ -534,6 +535,11 @@ function DatasetImageThumb({
           )}
         </span>
       )}
+      {isLastEdited && (
+        <span className="absolute bottom-1 left-1 rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
+          Last edit
+        </span>
+      )}
     </button>
   )
 }
@@ -553,6 +559,7 @@ function DatasetBatchSection({
   selected,
   onToggleSelect,
   portrait,
+  lastEdited,
 }) {
   const [loading, setLoading] = useState(false)
   const [loadedCount, setLoadedCount] = useState(0)
@@ -610,6 +617,7 @@ function DatasetBatchSection({
               src={src}
               isAnnotated={annotations[src] !== undefined}
               annotatedAgo={formatRelativeTime(annotationTimes[src])}
+              isLastEdited={src === lastEdited}
               selectable={removeMode}
               isSelected={selected?.has(src)}
               portrait={portrait}
@@ -648,6 +656,7 @@ function DatasetSimilarView({
   threshold,
   onThresholdChange,
   portrait,
+  lastEdited,
 }) {
   const [expanded, setExpanded] = useState(new Set())
   const aspectCls = portrait ? 'aspect-[9/16]' : 'aspect-video'
@@ -671,6 +680,7 @@ function DatasetSimilarView({
       src={src}
       isAnnotated={annotations[src] !== undefined}
       annotatedAgo={formatRelativeTime(annotationTimes[src])}
+      isLastEdited={src === lastEdited}
       selectable
       isSelected={selected?.has(src)}
       portrait={portrait}
@@ -933,6 +943,7 @@ function App() {
   const [datasetImageGroups, setDatasetImageGroups] = useState({})
   const [datasetAnnotations, setDatasetAnnotations] = useState({})
   const [datasetAnnotationTimes, setDatasetAnnotationTimes] = useState({})
+  const [datasetLastAttrs, setDatasetLastAttrs] = useState({})
   const [datasetBatchFilter, setDatasetBatchFilter] = useState(null)
   const [showExportPanel, setShowExportPanel] = useState(false)
   const [datasetSettingsOpen, setDatasetSettingsOpen] = useState(false)
@@ -1115,6 +1126,22 @@ function App() {
       ? (datasetImageGroups[datasetBatchFilter] ?? [])
       : datasetImages
   }, [similarView, datasetBatchFilter, datasetImageGroups, datasetImages])
+
+  const lastEditedImage = useMemo(() => {
+    const batch = datasetBatchFilter?.replace(/^raw-images_/, '')
+    if (!batch) return null
+    let best = null
+    let bestTime = 0
+    for (const [path, ts] of Object.entries(datasetAnnotationTimes)) {
+      if (path.split('/').slice(-2, -1)[0] !== batch) continue
+      const t = Date.parse(ts)
+      if (t > bestTime) {
+        bestTime = t
+        best = path
+      }
+    }
+    return best
+  }, [datasetAnnotationTimes, datasetBatchFilter])
 
   const handleDatasetImagesLoaded = (stem, images, replace) => {
     setDatasetImageGroups((prev) => ({
@@ -1418,6 +1445,7 @@ function App() {
         setDatasetBatchSources(imagesData.batch_sources ?? {})
         setDatasetAnnotations(annotData.annotations ?? {})
         setDatasetAnnotationTimes(annotData.updated_at ?? {})
+        setDatasetLastAttrs(annotData.last_attr ?? {})
         setDatasetRefreshKey((k) => k + 1)
         if (data.framework && data.model) {
           const tpl = `${data.framework}/${data.model}`.toLowerCase()
@@ -1543,7 +1571,7 @@ function App() {
     }
   }
 
-  const openAttrAnnotate = async (name, templateName, batchFilter = null) => {
+  const openAttrAnnotate = async (name, templateName, batchFilter = null, startImage = null, startAttr = null) => {
     if (!templateName) {
       setStatus('Set a model for this dataset before annotating')
       return
@@ -1579,8 +1607,8 @@ function App() {
         attributes,
         length,
         annotations,
-        attrIndex: 0,
-        imgIndex: 0,
+        attrIndex: typeof startAttr === 'number' && startAttr >= 0 && startAttr < attributes.length ? startAttr : 0,
+        imgIndex: Math.max(0, filteredImages.indexOf(startImage)),
       })
     } catch {
       setStatus('Failed: could not reach the server')
@@ -1614,11 +1642,21 @@ function App() {
       annotations: { ...s.annotations, [image]: current },
     }))
     try {
-      await fetch(`/api/datasets/${encodeURIComponent(attrAnnotate.dataset)}/annotations`, {
+      const response = await fetch(`/api/datasets/${encodeURIComponent(attrAnnotate.dataset)}/annotations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, values: current }),
+        body: JSON.stringify({ image, values: current, attr_index: attrAnnotate.attrIndex }),
       })
+      if (response.ok) {
+        setDatasetAnnotationTimes((prev) => ({
+          ...prev,
+          [image]: new Date().toISOString(),
+        }))
+        setDatasetLastAttrs((prev) => ({
+          ...prev,
+          [image]: attrAnnotate.attrIndex,
+        }))
+      }
     } catch {
       setStatus('Failed: could not reach the server')
     }
@@ -1802,6 +1840,11 @@ function App() {
         for (const p of paths) delete next[p]
         return next
       })
+      setDatasetLastAttrs((prev) => {
+        const next = { ...prev }
+        for (const p of paths) delete next[p]
+        return next
+      })
       setSimilarView((prev) => {
         if (!prev) return prev
         const clusters = []
@@ -1864,7 +1907,11 @@ function App() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image, values }),
+          body: JSON.stringify({
+            image,
+            values,
+            attr_index: annotate.wizardMode ? annotate.step : undefined,
+          }),
         },
       )
       if (!response.ok) {
@@ -1872,6 +1919,16 @@ function App() {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
       } else {
         setStatus('Annotation saved')
+        setDatasetAnnotationTimes((prev) => ({
+          ...prev,
+          [image]: new Date().toISOString(),
+        }))
+        if (annotate.wizardMode) {
+          setDatasetLastAttrs((prev) => ({
+            ...prev,
+            [image]: annotate.step,
+          }))
+        }
       }
     } catch {
       setStatus('Failed: could not reach the server')
@@ -1925,6 +1982,11 @@ function App() {
         return next
       })
       setDatasetAnnotationTimes((prev) => {
+        const next = { ...prev }
+        delete next[image]
+        return next
+      })
+      setDatasetLastAttrs((prev) => {
         const next = { ...prev }
         delete next[image]
         return next
@@ -3885,6 +3947,19 @@ function App() {
                     </button>
                     <button
                       type="button"
+                      onClick={() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter, lastEditedImage, datasetLastAttrs[lastEditedImage])}
+                      disabled={!templatePath || preLabeling || !lastEditedImage}
+                      title={`Open annotator at the most recently edited image in this batch${
+                        datasetAttributes?.[datasetLastAttrs[lastEditedImage]]
+                          ? ` (${datasetAttributes[datasetLastAttrs[lastEditedImage]].alias ?? datasetAttributes[datasetLastAttrs[lastEditedImage]].name})`
+                          : ''
+                      }`}
+                      className="rounded-full border border-blue-300 bg-blue-50 px-4 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-blue-100 disabled:opacity-40"
+                    >
+                      Last edited
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => {
                         if (datasetRemoveMode) {
                           setSelectedDatasetImages(new Set())
@@ -3954,6 +4029,7 @@ function App() {
                     fetchSimilar(t)
                   }}
                   portrait={datasetGridPortrait}
+                  lastEdited={lastEditedImage}
                 />
               ) : visibleStems.length === 0 ? (
                 <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
@@ -3979,6 +4055,7 @@ function App() {
                     selected={selectedDatasetImages}
                     onToggleSelect={toggleDatasetImageSelect}
                     portrait={datasetGridPortrait}
+                    lastEdited={lastEditedImage}
                   />
                 ))
               )}
@@ -4109,7 +4186,7 @@ function App() {
                 >
                   {attrAnnotate.attributes.map((attr, i) => (
                     <option key={attr.name} value={i}>
-                      {attr.name}
+                      {attr.alias ?? attr.name}
                     </option>
                   ))}
                 </select>
@@ -4193,7 +4270,7 @@ function App() {
                   return (
                     <>
                       <h3 className="text-lg font-semibold text-slate-800">
-                        {group.name}
+                        {group.alias ?? group.name}
                       </h3>
                       <p className="mt-1 text-sm text-slate-500">
                         Press a number, then use ← → to move.
@@ -4219,7 +4296,7 @@ function App() {
                               }`}>
                                 {i + 1}
                               </span>
-                              {option}
+                              {group.option_aliases?.[i] ?? option}
                             </button>
                           )
                         })}
@@ -4378,7 +4455,7 @@ function App() {
                           {annotate.step + 1} / {annotate.attributes.length}
                         </span>
                         <span className="uppercase tracking-wide">
-                          {group.name}
+                          {group.alias ?? group.name}
                         </span>
                       </div>
                       <div className="h-1 overflow-hidden rounded-full bg-slate-700">
@@ -4416,7 +4493,7 @@ function App() {
                                   : ''
                               }`}
                             >
-                              {option}
+                              {group.option_aliases?.[i] ?? option}
                             </button>
                           )
                         })}
@@ -4456,7 +4533,7 @@ function App() {
                     return (
                       <div key={group.name}>
                         <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          {group.name}
+                          {group.alias ?? group.name}
                         </h4>
                         <div className="mt-1.5 space-y-1">
                           {group.options.map((option, i) => (
@@ -4481,7 +4558,7 @@ function App() {
                                 }
                                 className="accent-indigo-500"
                               />
-                              {option}
+                              {group.option_aliases?.[i] ?? option}
                             </label>
                           ))}
                         </div>
@@ -4612,6 +4689,15 @@ function App() {
           <span className="text-sm font-medium text-slate-700">
             {selectedDatasetImages.size} selected
           </span>
+          <button
+            type="button"
+            onClick={() =>
+              setSelectedDatasetImages(new Set(datasetActiveImages))
+            }
+            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+          >
+            Select all
+          </button>
           <button
             type="button"
             onClick={() => setSelectedDatasetImages(new Set())}

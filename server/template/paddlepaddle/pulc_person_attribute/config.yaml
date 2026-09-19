@@ -4,45 +4,65 @@ pre-label-model: "person_attribute_infer.tar"
 model-annotation: "text"
 attributes:
   - name: Hat
+    alias: Topi
     type: multi
     indices: [0]
     options: [Hat]
+    option_aliases: [Topi]
   - name: Glasses
+    alias: Kacamata
     type: multi
     indices: [1]
     options: [Glasses]
+    option_aliases: [Kacamata]
   - name: Upper
+    alias: Atasan
     type: multi
     indices: [2, 3, 4, 5, 6, 7]
     options: [ShortSleeve, LongSleeve, UpperStride, UpperLogo, UpperPlaid, UpperSplice]
+    option_aliases: ['Lengan Pendek', 'Lengan Panjang', 'Bergaris', 'Berlogo', 'Kotak-kotak', 'Sambungan']
   - name: Lower
+    alias: Bawahan
     type: multi
     indices: [8, 9, 10, 11, 12, 13]
     options: [LowerStripe, LowerPattern, LongCoat, Trousers, Shorts, 'Skirt&Dress']
+    option_aliases: ['Bergaris', 'Bermotif', 'Jas Panjang', 'Celana Panjang', 'Celana Pendek', 'Rok & Dress']
   - name: Boots
+    alias: Sepatu
     type: multi
     indices: [14]
     options: [Boots]
+    option_aliases: [Boots]
   - name: Bag
+    alias: Tas
     type: multi
     indices: [15, 16, 17]
     options: [HandBag, ShoulderBag, Backpack]
+    option_aliases: ['Tas Tangan', 'Tas Selempang', 'Ransel']
   - name: HoldObjectsInFront
+    alias: Memegang Benda
     type: multi
     indices: [18]
     options: [HoldObjectsInFront]
+    option_aliases: ['Memegang Benda']
   - name: Age
+    alias: Usia
     type: single
     indices: [19, 20, 21]
     options: [AgeLess18, Age18-60, AgeOver60]
+    option_aliases: ['< 18 tahun', '18-60 tahun', '> 60 tahun']
   - name: Gender
+    alias: Jenis Kelamin
     type: multi
     indices: [22]
-    options: [Female (uncheck = Male)]
+    options: ['Female']
+    option_aliases: ['Perempuan']
   - name: Direction
+    alias: Arah
     type: single
     indices: [23, 24, 25]
     options: [Front, Side, Back]
+    option_aliases: [Depan, Samping, Belakang]
 text-format: "path/filename.jpg	0,0,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,1"
 folder:
   structure:

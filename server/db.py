@@ -111,6 +111,7 @@ class Annotation(Base, AuditMixin):
     image_id = Column(Integer, ForeignKey("images.id"), nullable=False)
     values = Column(JSON, default=list)
     pre_labels = Column(JSON, default=list)
+    last_attr = Column(Integer, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("dataset_id", "image_id", name="uq_annotation"),
@@ -166,5 +167,14 @@ def init_db():
             conn.exec_driver_sql(
                 "ALTER TABLE batches ADD COLUMN source_id INTEGER "
                 "REFERENCES sources(id)"
+            )
+            conn.commit()
+        annotation_cols = {
+            r[1]
+            for r in conn.exec_driver_sql("PRAGMA table_info(annotations)")
+        }
+        if "last_attr" not in annotation_cols:
+            conn.exec_driver_sql(
+                "ALTER TABLE annotations ADD COLUMN last_attr INTEGER"
             )
             conn.commit()
