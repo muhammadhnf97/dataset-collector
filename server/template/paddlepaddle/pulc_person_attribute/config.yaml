@@ -20,7 +20,7 @@ attributes:
     type: multi
     indices: [2, 3, 4, 5, 6, 7]
     options: [ShortSleeve, LongSleeve, UpperStride, UpperLogo, UpperPlaid, UpperSplice]
-    option_aliases: ['Lengan Pendek', 'Lengan Panjang', 'Bergaris', 'Berlogo', 'Kotak-kotak', 'Sambungan']
+    option_aliases: ['Lengan Pendek', 'Lengan Panjang', 'Bergaris', 'Bergambar', 'Kombinasi', 'Kotak-kotak']
   - name: Lower
     alias: Bawahan
     type: multi
@@ -49,8 +49,8 @@ attributes:
     alias: Usia
     type: single
     indices: [19, 20, 21]
-    options: [AgeLess18, Age18-60, AgeOver60]
-    option_aliases: ['< 18 tahun', '18-60 tahun', '> 60 tahun']
+    options: [AgeOver60, Age18-60, AgeLess18]
+    option_aliases: ['> 60 tahun', '18-60 tahun', '< 18 tahun']
   - name: Gender
     alias: Jenis Kelamin
     type: multi
