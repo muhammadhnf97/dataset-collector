@@ -1942,17 +1942,48 @@ def export_dataset(name: str, payload: dict | None = None):
     if not files:
         raise HTTPException(status_code=400, detail="No images found in selected batches")
 
-    random.shuffle(files)
     total = len(files)
-    n_train = round(total * split.get("train", 0) / 100)
-    n_val = round(total * split.get("val", 0) / 100)
-    n_test = total - n_train - n_val
+    group_split = payload.get("group_split", True)
 
-    split_files = {
-        "train": files[:n_train],
-        "val": files[n_train:n_train + n_val],
-        "test": files[n_train + n_val:],
-    }
+    if group_split and total > 1:
+        # Cluster-aware split: near-duplicate crops (same burst/person) are
+        # indivisible, so a group can't straddle train/val/test and inflate
+        # val metrics. Loose threshold on purpose — over-merging is safe,
+        # under-merging leaks.
+        items = []
+        for f in files:
+            mtime = f.stat().st_mtime
+            cached = _PHASH_CACHE.get(str(f))
+            if cached and cached[0] == mtime:
+                h = cached[1]
+            else:
+                h = _phash64(f)
+                if h is not None:
+                    _PHASH_CACHE[str(f)] = (mtime, h)
+            items.append((f, h))
+        hashed = [(f, h) for f, h in items if h is not None]
+        groups = (
+            _cluster_hashes(hashed, 12) if len(hashed) > 1 else [[f] for f, _ in hashed]
+        )
+        groups += [[f] for f, h in items if h is None]
+        random.shuffle(groups)
+        targets = {s: total * split.get(s, 0) / 100 for s in ("train", "val", "test")}
+        split_files = {s: [] for s in ("train", "val", "test")}
+        for g in groups:
+            best = max(
+                targets,
+                key=lambda s: (targets[s] - len(split_files[s])) / max(targets[s], 1),
+            )
+            split_files[best].extend(g)
+    else:
+        random.shuffle(files)
+        n_train = round(total * split.get("train", 0) / 100)
+        n_val = round(total * split.get("val", 0) / 100)
+        split_files = {
+            "train": files[:n_train],
+            "val": files[n_train:n_train + n_val],
+            "test": files[n_train + n_val:],
+        }
 
     annotations = load_annotations(dir_name)
     attr_groups = config.get("attributes", [])
@@ -2037,6 +2068,7 @@ def export_dataset(name: str, payload: dict | None = None):
         "counts": counts,
         "missing_annotations": missing_annotations,
         "format": export_format,
+        "split_strategy": "cluster" if group_split else "random",
         "download": f"/datasets/{quote(name, safe='')}/download?format={export_format}",
     }
 

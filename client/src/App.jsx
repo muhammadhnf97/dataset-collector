@@ -978,10 +978,13 @@ function App() {
   const [prelabelWriteValues, setPrelabelWriteValues] = useState(true)
   const [prelabelMenuOpen, setPrelabelMenuOpen] = useState(false)
   const prelabelMenuRef = useRef(null)
+  const [attrMenuOpen, setAttrMenuOpen] = useState(false)
+  const attrMenuRef = useRef(null)
   const [prelabelStatsOpen, setPrelabelStatsOpen] = useState(false)
   const [prelabelStats, setPrelabelStats] = useState(null)
   const [prelabelStatsLoading, setPrelabelStatsLoading] = useState(false)
   const [exportFormat, setExportFormat] = useState('tar')
+  const [exportGroupSplit, setExportGroupSplit] = useState(true)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const exportMenuRef = useRef(null)
   const [newDatasetMenuOpen, setNewDatasetMenuOpen] = useState(false)
@@ -2191,6 +2194,7 @@ function App() {
             split: datasetSplit,
             format: exportFormat,
             batches: selectedExportBatches,
+            group_split: exportGroupSplit,
           }),
         },
       )
@@ -2656,6 +2660,17 @@ function App() {
     window.addEventListener('mousedown', handleClick)
     return () => window.removeEventListener('mousedown', handleClick)
   }, [prelabelMenuOpen])
+
+  useEffect(() => {
+    if (!attrMenuOpen) return
+    const handleClick = (e) => {
+      if (attrMenuRef.current && !attrMenuRef.current.contains(e.target)) {
+        setAttrMenuOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [attrMenuOpen])
 
   useEffect(() => {
     if (!exportMenuOpen && !newDatasetMenuOpen) return
@@ -3937,27 +3952,72 @@ function App() {
                         </div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter)}
-                      disabled={!templatePath || preLabeling}
-                      className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
-                    >
-                      Correct Attribute
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter, lastEditedImage, datasetLastAttrs[lastEditedImage])}
-                      disabled={!templatePath || preLabeling || !lastEditedImage}
-                      title={`Open annotator at the most recently edited image in this batch${
-                        datasetAttributes?.[datasetLastAttrs[lastEditedImage]]
-                          ? ` (${datasetAttributes[datasetLastAttrs[lastEditedImage]].alias ?? datasetAttributes[datasetLastAttrs[lastEditedImage]].name})`
-                          : ''
-                      }`}
-                      className="rounded-full border border-blue-300 bg-blue-50 px-4 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-blue-100 disabled:opacity-40"
-                    >
-                      Last edited
-                    </button>
+                    <div ref={attrMenuRef} className="relative">
+                      <div className="flex overflow-hidden rounded-full border border-emerald-300 bg-emerald-50">
+                        <button
+                          type="button"
+                          onClick={() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter)}
+                          disabled={!templatePath || preLabeling}
+                          className="px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
+                        >
+                          Correct Attribute
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAttrMenuOpen((v) => !v)}
+                          disabled={!templatePath || preLabeling}
+                          className="border-l border-emerald-300 px-2 text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
+                        >
+                          <svg
+                            className={`h-4 w-4 transition-transform ${attrMenuOpen ? 'rotate-180' : ''}`}
+                            xmlns="http://www.w3.org/2000/svg"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            strokeWidth={2}
+                            stroke="currentColor"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                          </svg>
+                        </button>
+                      </div>
+                      {attrMenuOpen && (
+                        <div className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAttrMenuOpen(false)
+                              openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter)
+                            }}
+                            className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-emerald-50"
+                          >
+                            <span className="block font-medium">From start</span>
+                            <span className="block text-xs text-slate-400">
+                              Begin at the first image
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAttrMenuOpen(false)
+                              openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter, lastEditedImage, datasetLastAttrs[lastEditedImage])
+                            }}
+                            disabled={!lastEditedImage}
+                            className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-emerald-50 disabled:opacity-40"
+                          >
+                            <span className="block font-medium">From last edited</span>
+                            <span className="block text-xs text-slate-400">
+                              {lastEditedImage
+                                ? `Resume at last edited image${
+                                    datasetAttributes?.[datasetLastAttrs[lastEditedImage]]
+                                      ? ` (${datasetAttributes[datasetLastAttrs[lastEditedImage]].alias ?? datasetAttributes[datasetLastAttrs[lastEditedImage]].name})`
+                                      : ''
+                                  }`
+                                : 'No edits in this batch yet'}
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={() => {
@@ -4940,6 +5000,22 @@ function App() {
               </select>
             </div>
 
+            <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={exportGroupSplit}
+                onChange={(e) => setExportGroupSplit(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span>
+                <span className="font-medium">Identity-aware split</span>
+                <span className="block text-xs text-slate-400">
+                  Keeps near-duplicate crops of the same person in one split
+                  (prevents val/test leakage)
+                </span>
+              </span>
+            </label>
+
             <div className="mt-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-sm font-medium text-slate-700">
@@ -4994,6 +5070,9 @@ function App() {
               <div className="mt-4 flex flex-col items-center gap-2 text-sm text-slate-600">
                 <span>
                   train {exportResult.counts.train} / val {exportResult.counts.val} / test {exportResult.counts.test}
+                  {exportResult.split_strategy === 'cluster' && (
+                    <span className="text-slate-400"> · identity-aware</span>
+                  )}
                 </span>
                 <a
                   href={`/api${exportResult.download}`}
