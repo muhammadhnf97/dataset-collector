@@ -52,3 +52,6 @@ server/datasets/
 # Logs
 logs/
 *.log
+
+# SQLite database (runtime state)
+server/data.db*
