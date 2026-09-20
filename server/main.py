@@ -25,6 +25,8 @@ from sqlalchemy.dialects.sqlite import insert
 from db import (
     SessionLocal,
     init_db,
+    hash_password,
+    verify_password,
     Batch as DbBatch,
     Dataset as DbDataset,
     DatasetImage as DbDatasetImage,
@@ -32,6 +34,8 @@ from db import (
     Annotation as DbAnnotation,
     Archive as DbArchive,
     Source as DbSource,
+    User as DbUser,
+    ActivityLog as DbActivityLog,
 )
 
 app = FastAPI(title="Dataset Collector API")
@@ -1234,6 +1238,23 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
     if write_values:
         save_annotations(dir_name, processed)
     save_prelabels(dir_name, processed)
+
+    user_name = (payload.get("user") or "").strip() or "system"
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        log_activity(
+            db,
+            user_name,
+            "prelabel",
+            dataset_id=db_dataset.id if db_dataset else None,
+            dataset_name=name,
+            detail={"batch": payload.get("batch") or None, "images": count, "write_values": write_values},
+        )
+        db.commit()
+    finally:
+        db.close()
+
     return {
         "dataset": name,
         "batch": payload.get("batch") or None,
@@ -1277,6 +1298,14 @@ def remove_dataset_image(name: str, payload: dict):
                 DbAnnotation.dataset_id == db_dataset.id,
                 DbAnnotation.image_id.in_(image_ids),
             ).delete(synchronize_session=False)
+            log_activity(
+                db,
+                (payload.get("user") or "").strip() or "root",
+                "remove_image",
+                dataset_id=db_dataset.id,
+                dataset_name=name,
+                detail={"count": len(image_paths)},
+            )
             db.commit()
     finally:
         db.close()
@@ -1696,12 +1725,89 @@ def get_dataset_annotations(name: str):
     if not dir_name:
         raise HTTPException(status_code=404, detail="Dataset not found")
     updated_at, last_attr = load_annotation_times(dir_name)
+    reviewed = {}
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if db_dataset:
+            rows = (
+                db.query(
+                    DbActivityLog.image_path,
+                    DbActivityLog.user_name,
+                    DbActivityLog.created_at,
+                    DbActivityLog.detail,
+                )
+                .filter(
+                    DbActivityLog.dataset_id == db_dataset.id,
+                    DbActivityLog.action.in_(["annotate", "check"]),
+                    DbActivityLog.image_path.isnot(None),
+                )
+                .order_by(DbActivityLog.created_at.desc())
+                .all()
+            )
+            # rows are newest-first: first hit per (image, attr, user) is the
+            # latest. attr key is str(attr_index); "all" = whole-image action
+            # (e.g. freeform annotate with no focused group).
+            for path, user, ts, detail in rows:
+                attr = (detail or {}).get("attr_index")
+                key = "all" if attr is None else str(attr)
+                users = reviewed.setdefault(path, {}).setdefault(key, {})
+                if user not in users:
+                    users[user] = ts.isoformat() + "Z" if ts else None
+    finally:
+        db.close()
     return {
         "dataset": name,
         "annotations": load_annotations(dir_name),
         "updated_at": updated_at,
         "last_attr": last_attr,
+        "reviewed": reviewed,
     }
+
+
+@app.post("/datasets/{name}/check")
+def check_dataset_image(name: str, payload: dict = Body(...)):
+    """Record that `user` reviewed `image` (e.g. arrow-navigated onto it in
+    the correction flow) without changing any attribute. Skips the insert
+    when the user's latest annotate/check row already points at this image.
+    """
+    image = payload.get("image")
+    if not image:
+        raise HTTPException(status_code=400, detail="image is required")
+    user_name = (payload.get("user") or "").strip() or "root"
+    attr_index = payload.get("attr_index")
+
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        last = (
+            db.query(DbActivityLog)
+            .filter(
+                DbActivityLog.dataset_id == db_dataset.id,
+                DbActivityLog.user_name == user_name,
+                DbActivityLog.action.in_(["annotate", "check"]),
+                DbActivityLog.image_path.isnot(None),
+            )
+            .order_by(DbActivityLog.created_at.desc())
+            .first()
+        )
+        if last and last.image_path == image:
+            return {"dataset": name, "image": image, "skipped": True}
+        log_activity(
+            db,
+            user_name,
+            "check",
+            dataset_id=db_dataset.id,
+            dataset_name=name,
+            image_path=image,
+            detail={"attr_index": attr_index} if isinstance(attr_index, int) and not isinstance(attr_index, bool) else {},
+        )
+        db.commit()
+        return {"dataset": name, "image": image, "skipped": False}
+    finally:
+        db.close()
 
 
 @app.post("/datasets/{name}/annotations")
@@ -1713,6 +1819,7 @@ def set_dataset_annotation(name: str, payload: dict):
     if not isinstance(values, list) or not all(v in (0, 1) for v in values):
         raise HTTPException(status_code=400, detail="values must be a list of 0/1")
 
+    user_name = (payload.get("user") or "").strip() or "root"
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
@@ -1727,7 +1834,7 @@ def set_dataset_annotation(name: str, payload: dict):
             "dataset_id": db_dataset.id,
             "image_id": db_image.id,
             "values": values,
-            "updated_by": "root",
+            "updated_by": user_name,
         }
         if isinstance(attr_index, int) and not isinstance(attr_index, bool):
             insert_values["last_attr"] = attr_index
@@ -1744,10 +1851,19 @@ def set_dataset_annotation(name: str, payload: dict):
             set_=set_map,
         )
         db.execute(stmt)
+        log_activity(
+            db,
+            user_name,
+            "annotate",
+            dataset_id=db_dataset.id,
+            dataset_name=name,
+            image_path=image,
+            detail={"attr_index": attr_index} if attr_index is not None else {},
+        )
         db.commit()
     finally:
         db.close()
-    return {"dataset": name, "image": image, "values": values, "updated_by": "root"}
+    return {"dataset": name, "image": image, "values": values, "updated_by": user_name}
 
 
 def _attribute_labels(attributes, vector_length):
@@ -2541,6 +2657,160 @@ def _source_dict(src):
     if not src:
         return None
     return {"id": src.id, "name": src.name, "version": src.version}
+
+
+def log_activity(
+    db,
+    user_name: str | None,
+    action: str,
+    dataset_id: int | None = None,
+    dataset_name: str | None = None,
+    image_path: str | None = None,
+    detail: dict | None = None,
+):
+    db.add(
+        DbActivityLog(
+            user_name=user_name or "system",
+            action=action,
+            dataset_id=dataset_id,
+            dataset_name=dataset_name,
+            image_path=image_path,
+            detail=detail or {},
+        )
+    )
+
+
+@app.get("/users")
+def list_users():
+    db = SessionLocal()
+    try:
+        users = db.query(DbUser).order_by(DbUser.name).all()
+        return {
+            "users": [
+                {"id": u.id, "name": u.name, "role": u.role}
+                for u in users
+            ]
+        }
+    finally:
+        db.close()
+
+
+@app.post("/users")
+def create_user(payload: dict = Body(...)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name required")
+    role = (payload.get("role") or "worker").strip()
+    if role not in ("worker", "superadmin"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    password = payload.get("password") or ""
+    if role == "superadmin" and not password:
+        raise HTTPException(status_code=400, detail="Password required for superadmin")
+
+    db = SessionLocal()
+    try:
+        existing = db.query(DbUser).filter_by(name=name).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="User already exists")
+        user = DbUser(
+            name=name,
+            role=role,
+            password_hash=hash_password(password) if password else None,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return {"id": user.id, "name": user.name, "role": user.role}
+    finally:
+        db.close()
+
+
+@app.post("/users/{name}/verify")
+def verify_user(name: str, payload: dict = Body(default={})):
+    name = unquote(name)
+    password = payload.get("password") or ""
+    db = SessionLocal()
+    try:
+        user = db.query(DbUser).filter_by(name=name).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        if user.role == "superadmin":
+            if not user.password_hash or not verify_password(password, user.password_hash):
+                raise HTTPException(status_code=401, detail="Invalid password")
+        return {"id": user.id, "name": user.name, "role": user.role}
+    finally:
+        db.close()
+
+
+@app.get("/activity")
+def list_activity(dataset: str | None = None, limit: int = 50):
+    db = SessionLocal()
+    try:
+        query = db.query(DbActivityLog).order_by(DbActivityLog.created_at.desc())
+        if dataset:
+            dataset = unquote(dataset)
+            query = query.filter(DbActivityLog.dataset_name == dataset)
+        rows = query.limit(min(limit, 200)).all()
+        return {
+            "activity": [
+                {
+                    "id": r.id,
+                    "created_at": r.created_at.isoformat() + "Z" if r.created_at else None,
+                    "user_name": r.user_name,
+                    "action": r.action,
+                    "dataset_name": r.dataset_name,
+                    "image_path": r.image_path,
+                    "detail": r.detail or {},
+                }
+                for r in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@app.get("/datasets/{name}/last-edit")
+def get_last_edit(name: str, user: str, batch: str | None = None):
+    """Most recent 'annotate' or 'check' activity by `user` in this dataset
+    (optionally scoped to `batch`) — powers the per-user "resume where I
+    left off" flow.
+    """
+    name = unquote(name)
+    if not user:
+        raise HTTPException(status_code=400, detail="user is required")
+    batch = Path(unquote(batch)).name if batch else None
+
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        rows = (
+            db.query(DbActivityLog)
+            .filter(
+                DbActivityLog.dataset_id == db_dataset.id,
+                DbActivityLog.user_name == user,
+                DbActivityLog.action.in_(["annotate", "check"]),
+                DbActivityLog.image_path.isnot(None),
+            )
+            .order_by(DbActivityLog.created_at.desc())
+            .limit(500)
+            .all()
+        )
+        for row in rows:
+            if batch:
+                parts = (row.image_path or "").strip("/").split("/")
+                img_batch = parts[-2] if len(parts) >= 2 else None
+                if img_batch != batch:
+                    continue
+            return {
+                "image": row.image_path,
+                "attr_index": (row.detail or {}).get("attr_index"),
+                "created_at": row.created_at.isoformat() + "Z" if row.created_at else None,
+            }
+        return {"image": None, "attr_index": None, "created_at": None}
+    finally:
+        db.close()
 
 
 @app.get("/sources")

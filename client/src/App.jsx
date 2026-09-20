@@ -98,7 +98,7 @@ function Filmstrip({ images, index, marked, onSelect }) {
   )
 }
 
-function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, attributes, annotations }) {
+function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, attributes, annotations, reviewed }) {
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === 'Escape') onClose()
@@ -187,19 +187,38 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, at
           {(() => {
             const current = images[index].path ?? images[index]
             const values = annotations?.[current]
+            const attrReview = reviewed?.[current] ?? {}
+            const reviewersFor = (gi) =>
+              sortedReviewers(
+                mergeReviewerMaps(attrReview[String(gi)], attrReview.all),
+              )
             if (!values) {
+              const any = sortedReviewers(
+                mergeReviewerMaps(...Object.values(attrReview)),
+              )
               return (
-                <p className="flex items-center gap-1.5 py-1 text-slate-400">
-                  <span className="inline-block h-2 w-2 rounded-full bg-red-400" />
-                  Not annotated
-                </p>
+                <>
+                  <p className="flex items-center gap-1.5 py-1 text-slate-400">
+                    <span className="inline-block h-2 w-2 rounded-full bg-red-400" />
+                    Not annotated
+                  </p>
+                  {any.length > 0 && (
+                    <p className="py-0.5 text-[10px] text-slate-400">
+                      Reviewed by{' '}
+                      {any
+                        .map(([u, at]) => `${u} · ${formatRelativeTime(at)}`)
+                        .join(', ')}
+                    </p>
+                  )}
+                </>
               )
             }
-            return attributes.map((group) => {
+            return attributes.map((group, gi) => {
               const selected = (group.options ?? [])
                 .map((opt, i) => group.option_aliases?.[i] ?? opt)
                 .filter((_, i) => values[group.indices[i]] === 1)
               const hasValue = selected.length > 0
+              const rowReviewers = reviewersFor(gi)
               return (
                 <div
                   key={group.name}
@@ -220,6 +239,16 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, at
                   >
                     {hasValue ? selected.join(', ') : '—'}
                   </span>
+                  {rowReviewers.length > 0 && (
+                    <span
+                      className="ml-auto shrink-0 text-[10px] font-normal text-slate-400"
+                      title={rowReviewers
+                        .map(([u, at]) => `${u} · ${formatRelativeTime(at)}`)
+                        .join('\n')}
+                    >
+                      {rowReviewers.map(([u]) => u).join(', ')}
+                    </span>
+                  )}
                 </div>
               )
             })
@@ -459,11 +488,28 @@ function formatRelativeTime(dateString) {
 }
 
 const DATASET_PAGE_LIMIT = 200
+const REVIEW_MIN_DWELL_MS = 1000
+
+// Merge several {user: isoTime} reviewer maps into one, keeping each user's
+// latest timestamp. `datasetReviewed` is {image: {attrKey: {user: time}}}.
+const mergeReviewerMaps = (...maps) => {
+  const merged = {}
+  for (const m of maps) {
+    for (const [user, at] of Object.entries(m ?? {})) {
+      if (!merged[user] || (at ?? '') > (merged[user] ?? '')) merged[user] = at
+    }
+  }
+  return merged
+}
+
+const sortedReviewers = (merged) =>
+  Object.entries(merged).sort((a, b) => (b[1] ?? '').localeCompare(a[1] ?? ''))
 
 function DatasetImageThumb({
   src,
   isAnnotated,
   annotatedAgo,
+  reviewedBy,
   isLastEdited,
   selectable,
   isSelected,
@@ -471,6 +517,11 @@ function DatasetImageThumb({
   onOpen,
   onToggle,
 }) {
+  const reviewers = reviewedBy
+    ? sortedReviewers(mergeReviewerMaps(...Object.values(reviewedBy))).map(
+        ([user, at]) => ({ user, ago: formatRelativeTime(at) }),
+      )
+    : []
   return (
     <button
       type="button"
@@ -535,6 +586,30 @@ function DatasetImageThumb({
           )}
         </span>
       )}
+      {reviewers.length > 0 && (
+        <span
+          title={reviewers.map((r) => `${r.user}${r.ago ? ` · ${r.ago}` : ''}`).join('\n')}
+          className={`absolute right-1 ${isAnnotated ? 'top-7' : 'top-1'} flex max-w-[85%] items-center gap-1 truncate rounded-full bg-sky-500/90 px-2 py-0.5 text-[10px] font-bold text-white shadow`}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className="h-2.5 w-2.5 shrink-0"
+          >
+            <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+            <path
+              fillRule="evenodd"
+              d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
+              clipRule="evenodd"
+            />
+          </svg>
+          <span className="truncate">
+            {reviewers[0].user}
+            {reviewers.length > 1 && ` +${reviewers.length - 1}`}
+          </span>
+        </span>
+      )}
       {isLastEdited && (
         <span className="absolute bottom-1 left-1 rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
           Last edit
@@ -552,6 +627,7 @@ function DatasetBatchSection({
   images,
   annotations,
   annotationTimes,
+  reviewed,
   refreshKey,
   onImagesLoaded,
   onOpenImage,
@@ -617,6 +693,7 @@ function DatasetBatchSection({
               src={src}
               isAnnotated={annotations[src] !== undefined}
               annotatedAgo={formatRelativeTime(annotationTimes[src])}
+              reviewedBy={reviewed?.[src]}
               isLastEdited={src === lastEdited}
               selectable={removeMode}
               isSelected={selected?.has(src)}
@@ -648,6 +725,7 @@ function DatasetSimilarView({
   singles,
   annotations,
   annotationTimes,
+  reviewed,
   selected,
   onToggleSelect,
   onOpenImage,
@@ -680,6 +758,7 @@ function DatasetSimilarView({
       src={src}
       isAnnotated={annotations[src] !== undefined}
       annotatedAgo={formatRelativeTime(annotationTimes[src])}
+      reviewedBy={reviewed?.[src]}
       isLastEdited={src === lastEdited}
       selectable
       isSelected={selected?.has(src)}
@@ -944,6 +1023,7 @@ function App() {
   const [datasetAnnotations, setDatasetAnnotations] = useState({})
   const [datasetAnnotationTimes, setDatasetAnnotationTimes] = useState({})
   const [datasetLastAttrs, setDatasetLastAttrs] = useState({})
+  const [datasetReviewed, setDatasetReviewed] = useState({})
   const [datasetBatchFilter, setDatasetBatchFilter] = useState(null)
   const [showExportPanel, setShowExportPanel] = useState(false)
   const [datasetSettingsOpen, setDatasetSettingsOpen] = useState(false)
@@ -957,6 +1037,7 @@ function App() {
     test: 10,
   })
   const attrStripRef = useRef(null)
+  const attrImgShownAtRef = useRef(0) // timestamp current correction image appeared (dwell gating)
   const [exportResult, setExportResult] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [selectedExportBatches, setSelectedExportBatches] = useState([])
@@ -983,6 +1064,22 @@ function App() {
   const [prelabelStatsOpen, setPrelabelStatsOpen] = useState(false)
   const [prelabelStats, setPrelabelStats] = useState(null)
   const [prelabelStatsLoading, setPrelabelStatsLoading] = useState(false)
+  const [currentUser, setCurrentUser] = useState(
+    () => localStorage.getItem('annotatorUser') || '',
+  )
+  const [users, setUsers] = useState([])
+  const [userPickerOpen, setUserPickerOpen] = useState(false)
+  const [userPickerMode, setUserPickerMode] = useState('pick') // 'pick' | 'create' | 'password'
+  const [userPickerTarget, setUserPickerTarget] = useState(null) // name pending password check
+  const [userPickerError, setUserPickerError] = useState('')
+  const [newUserName, setNewUserName] = useState('')
+  const [newUserRole, setNewUserRole] = useState('worker')
+  const [newUserPassword, setNewUserPassword] = useState('')
+  const [passwordInput, setPasswordInput] = useState('')
+  const pendingUserActionRef = useRef(null)
+  const [activityOpen, setActivityOpen] = useState(false)
+  const [activity, setActivity] = useState([])
+  const [activityLoading, setActivityLoading] = useState(false)
   const [exportFormat, setExportFormat] = useState('tar')
   const [exportGroupSplit, setExportGroupSplit] = useState(true)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
@@ -1130,21 +1227,35 @@ function App() {
       : datasetImages
   }, [similarView, datasetBatchFilter, datasetImageGroups, datasetImages])
 
-  const lastEditedImage = useMemo(() => {
-    const batch = datasetBatchFilter?.replace(/^raw-images_/, '')
-    if (!batch) return null
-    let best = null
-    let bestTime = 0
-    for (const [path, ts] of Object.entries(datasetAnnotationTimes)) {
-      if (path.split('/').slice(-2, -1)[0] !== batch) continue
-      const t = Date.parse(ts)
-      if (t > bestTime) {
-        bestTime = t
-        best = path
-      }
+  // "Last edited" is per-user (from the activity log), not just whichever
+  // annotation row has the newest updated_at — so each annotator resumes at
+  // their own progress, not a colleague's.
+  const [myLastEdit, setMyLastEdit] = useState(null) // { image, attr_index, created_at } | null
+  const lastEditedImage = myLastEdit?.image ?? null
+
+  const fetchMyLastEdit = async () => {
+    if (!activeDataset || !currentUser) {
+      setMyLastEdit(null)
+      return
     }
-    return best
-  }, [datasetAnnotationTimes, datasetBatchFilter])
+    const batch = datasetBatchFilter?.replace(/^raw-images_/, '')
+    try {
+      const params = new URLSearchParams({ user: currentUser })
+      if (batch) params.set('batch', batch)
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/last-edit?${params}`,
+      )
+      const data = await response.json()
+      setMyLastEdit(response.ok && data.image ? data : null)
+    } catch {
+      setMyLastEdit(null)
+    }
+  }
+
+  useEffect(() => {
+    fetchMyLastEdit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDataset, datasetBatchFilter, currentUser])
 
   const handleDatasetImagesLoaded = (stem, images, replace) => {
     setDatasetImageGroups((prev) => ({
@@ -1449,6 +1560,7 @@ function App() {
         setDatasetAnnotations(annotData.annotations ?? {})
         setDatasetAnnotationTimes(annotData.updated_at ?? {})
         setDatasetLastAttrs(annotData.last_attr ?? {})
+        setDatasetReviewed(annotData.reviewed ?? {})
         setDatasetRefreshKey((k) => k + 1)
         if (data.framework && data.model) {
           const tpl = `${data.framework}/${data.model}`.toLowerCase()
@@ -1648,7 +1760,12 @@ function App() {
       const response = await fetch(`/api/datasets/${encodeURIComponent(attrAnnotate.dataset)}/annotations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image, values: current, attr_index: attrAnnotate.attrIndex }),
+        body: JSON.stringify({
+          image,
+          values: current,
+          attr_index: attrAnnotate.attrIndex,
+          user: currentUser,
+        }),
       })
       if (response.ok) {
         setDatasetAnnotationTimes((prev) => ({
@@ -1659,6 +1776,22 @@ function App() {
           ...prev,
           [image]: attrAnnotate.attrIndex,
         }))
+        if (currentUser) {
+          const now = new Date().toISOString()
+          const key = String(attrAnnotate.attrIndex)
+          setDatasetReviewed((prev) => ({
+            ...prev,
+            [image]: {
+              ...(prev[image] ?? {}),
+              [key]: { ...(prev[image]?.[key] ?? {}), [currentUser]: now },
+            },
+          }))
+          setMyLastEdit({
+            image,
+            attr_index: attrAnnotate.attrIndex,
+            created_at: now,
+          })
+        }
       }
     } catch {
       setStatus('Failed: could not reach the server')
@@ -1668,15 +1801,55 @@ function App() {
     }
   }
 
+  // Fire-and-forget: records that the current user finished reviewing
+  // `image` — called when arrow navigation departs it in the correction
+  // modal — even when no attribute changed, so "From last edited" can
+  // resume at the last image actually looked at. Images departed in under
+  // REVIEW_MIN_DWELL_MS are skipped: a fly-past isn't a review.
+  const logAttrCheck = (image) => {
+    if (!attrAnnotate || !image) return
+    if (Date.now() - attrImgShownAtRef.current < REVIEW_MIN_DWELL_MS) return
+    const attrIndex = attrAnnotate.attrIndex
+    fetch(`/api/datasets/${encodeURIComponent(attrAnnotate.dataset)}/check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image,
+        attr_index: attrIndex,
+        user: currentUser,
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || data.skipped) return
+        const now = new Date().toISOString()
+        const key = String(attrIndex)
+        setDatasetReviewed((prev) => ({
+          ...prev,
+          [image]: {
+            ...(prev[image] ?? {}),
+            [key]: {
+              ...(prev[image]?.[key] ?? {}),
+              [currentUser || 'root']: now,
+            },
+          },
+        }))
+        setMyLastEdit({ image, attr_index: attrIndex, created_at: now })
+      })
+      .catch(() => {})
+  }
+
   const attrNextImage = () => {
     if (!attrAnnotate) return
     const next = Math.min(attrAnnotate.imgIndex + 1, attrAnnotate.images.length - 1)
+    if (next !== attrAnnotate.imgIndex) logAttrCheck(attrAnnotate.images[attrAnnotate.imgIndex])
     setAttrAnnotate((s) => ({ ...s, imgIndex: next }))
   }
 
   const attrPrevImage = () => {
     if (!attrAnnotate) return
     const prev = Math.max(attrAnnotate.imgIndex - 1, 0)
+    if (prev !== attrAnnotate.imgIndex) logAttrCheck(attrAnnotate.images[attrAnnotate.imgIndex])
     setAttrAnnotate((s) => ({ ...s, imgIndex: prev }))
   }
 
@@ -1690,7 +1863,7 @@ function App() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image }),
+          body: JSON.stringify({ image, user: currentUser }),
         },
       )
       const data = await response.json()
@@ -1700,6 +1873,7 @@ function App() {
       }
       setStatus(`Removed image from dataset`)
       await refreshDataset(attrAnnotate.dataset)
+      setMyLastEdit((prev) => (prev?.image === image ? null : prev))
       setAttrAnnotate((state) => {
         if (!state) return state
         const newImages = state.images.filter((s) => s !== image)
@@ -1796,7 +1970,7 @@ function App() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ images: paths }),
+          body: JSON.stringify({ images: paths, user: currentUser }),
         },
       )
       const data = await response.json()
@@ -1848,6 +2022,12 @@ function App() {
         for (const p of paths) delete next[p]
         return next
       })
+      setDatasetReviewed((prev) => {
+        const next = { ...prev }
+        for (const p of paths) delete next[p]
+        return next
+      })
+      setMyLastEdit((prev) => (prev && paths.includes(prev.image) ? null : prev))
       setSimilarView((prev) => {
         if (!prev) return prev
         const clusters = []
@@ -1914,6 +2094,7 @@ function App() {
             image,
             values,
             attr_index: annotate.wizardMode ? annotate.step : undefined,
+            user: currentUser,
           }),
         },
       )
@@ -1926,11 +2107,29 @@ function App() {
           ...prev,
           [image]: new Date().toISOString(),
         }))
+        if (currentUser) {
+          const now = new Date().toISOString()
+          const key = annotate.wizardMode ? String(annotate.step) : 'all'
+          setDatasetReviewed((prev) => ({
+            ...prev,
+            [image]: {
+              ...(prev[image] ?? {}),
+              [key]: { ...(prev[image]?.[key] ?? {}), [currentUser]: now },
+            },
+          }))
+        }
         if (annotate.wizardMode) {
           setDatasetLastAttrs((prev) => ({
             ...prev,
             [image]: annotate.step,
           }))
+          if (currentUser) {
+            setMyLastEdit({
+              image,
+              attr_index: annotate.step,
+              created_at: new Date().toISOString(),
+            })
+          }
         }
       }
     } catch {
@@ -1994,6 +2193,12 @@ function App() {
         delete next[image]
         return next
       })
+      setDatasetReviewed((prev) => {
+        const next = { ...prev }
+        delete next[image]
+        return next
+      })
+      setMyLastEdit((prev) => (prev?.image === image ? null : prev))
       setAnnotate((state) => {
         if (!state) return state
         const newImages = state.images.filter((s) => s !== image)
@@ -2560,6 +2765,7 @@ function App() {
           body: JSON.stringify({
             batch: datasetBatchFilter || '',
             write_values: writeValues,
+            user: currentUser,
           }),
         },
       )
@@ -2595,6 +2801,149 @@ function App() {
       }
     }
     runPrelabel(writeValues)
+  }
+
+  const fetchUsers = async () => {
+    try {
+      const response = await fetch('/api/users')
+      const data = await response.json()
+      if (response.ok) setUsers(data.users ?? [])
+    } catch {
+      // picker still usable for creating a first user even if this fails
+    }
+  }
+
+  const openUserPicker = () => {
+    setUserPickerMode('pick')
+    setUserPickerTarget(null)
+    setUserPickerError('')
+    setNewUserName('')
+    setNewUserRole('worker')
+    setNewUserPassword('')
+    setPasswordInput('')
+    fetchUsers()
+    setUserPickerOpen(true)
+  }
+
+  // Runs `action(name)` immediately if a user identity is already chosen;
+  // otherwise opens the picker and resumes `action(name)` once one is
+  // selected/verified. `action` always receives the resolved name directly
+  // (not just via the `currentUser` state) so it can be used synchronously
+  // even in the same click that just picked the user, before React re-renders.
+  const requireUser = (action) => {
+    if (currentUser) {
+      action(currentUser)
+      return
+    }
+    pendingUserActionRef.current = action
+    openUserPicker()
+  }
+
+  const confirmUser = (name) => {
+    setCurrentUser(name)
+    localStorage.setItem('annotatorUser', name)
+    setUserPickerOpen(false)
+    const action = pendingUserActionRef.current
+    pendingUserActionRef.current = null
+    if (action) action(name)
+  }
+
+  // Closing the picker without picking also drops any queued action from
+  // requireUser — otherwise a stale pending action would fire the next
+  // time confirmUser runs from an unrelated context.
+  const closeUserPicker = () => {
+    pendingUserActionRef.current = null
+    setUserPickerOpen(false)
+  }
+
+  const pickUser = (user) => {
+    if (user.role === 'superadmin') {
+      setUserPickerTarget(user.name)
+      setUserPickerMode('password')
+      setUserPickerError('')
+      setPasswordInput('')
+    } else {
+      confirmUser(user.name)
+    }
+  }
+
+  const submitPassword = async () => {
+    try {
+      const response = await fetch(
+        `/api/users/${encodeURIComponent(userPickerTarget)}/verify`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: passwordInput }),
+        },
+      )
+      const data = await response.json()
+      if (response.ok) {
+        confirmUser(data.name)
+      } else {
+        setUserPickerError(data.detail ?? 'Incorrect password')
+      }
+    } catch {
+      setUserPickerError('Could not reach the server')
+    }
+  }
+
+  const submitNewUser = async () => {
+    const name = newUserName.trim()
+    if (!name) {
+      setUserPickerError('Name required')
+      return
+    }
+    if (newUserRole === 'superadmin' && !newUserPassword) {
+      setUserPickerError('Password required for superadmin')
+      return
+    }
+    try {
+      const response = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          role: newUserRole,
+          password: newUserRole === 'superadmin' ? newUserPassword : undefined,
+        }),
+      })
+      const data = await response.json()
+      if (response.ok) {
+        confirmUser(data.name)
+      } else {
+        setUserPickerError(data.detail ?? 'Could not create user')
+      }
+    } catch {
+      setUserPickerError('Could not reach the server')
+    }
+  }
+
+  const switchUser = () => {
+    setCurrentUser('')
+    localStorage.removeItem('annotatorUser')
+    openUserPicker()
+  }
+
+  const fetchActivity = async () => {
+    if (!activeDataset) return
+    setActivityLoading(true)
+    try {
+      const response = await fetch(
+        `/api/activity?dataset=${encodeURIComponent(activeDataset)}&limit=50`,
+      )
+      const data = await response.json()
+      if (response.ok) {
+        setActivity(data.activity ?? [])
+        setActivityOpen(true)
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Could not load activity'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setActivityLoading(false)
+    }
   }
 
   const fetchPrelabelStats = async () => {
@@ -2700,6 +3049,27 @@ function App() {
     fetchTemplates()
   }, [])
 
+  // Validate a stored identity against the server on load — if the user was
+  // removed/renamed server-side (e.g. users table reset), don't keep
+  // attributing this browser's annotations to a name that no longer exists.
+  useEffect(() => {
+    const stored = localStorage.getItem('annotatorUser')
+    if (!stored) return
+    fetch('/api/users')
+      .then((r) => r.json())
+      .then((data) => {
+        const exists = (data.users ?? []).some((u) => u.name === stored)
+        if (!exists) {
+          localStorage.removeItem('annotatorUser')
+          setCurrentUser('')
+        }
+      })
+      .catch(() => {
+        // server unreachable at boot — keep the stored name, don't punish
+        // the user for a transient network hiccup
+      })
+  }, [])
+
   useEffect(() => {
     if (selectedBatchId !== null) {
       fetchRawImages(selectedBatchId, imagePage)
@@ -2785,6 +3155,7 @@ function App() {
 
   useEffect(() => {
     if (!attrAnnotate) return
+    attrImgShownAtRef.current = Date.now()
     const el = attrStripRef.current?.querySelector('[data-active="true"]')
     el?.scrollIntoView({ inline: 'center', block: 'nearest' })
   }, [attrAnnotate?.imgIndex])
@@ -2879,6 +3250,41 @@ function App() {
             >
               Archives
             </button>
+            {currentUser ? (
+              <button
+                type="button"
+                onClick={switchUser}
+                title="Switch annotator"
+                className="ml-1 flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3.5 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  className="h-4 w-4"
+                >
+                  <path d="M10 9a3 3 0 100-6 3 3 0 000 6zM6 8a2 2 0 11-4 0 2 2 0 014 0zM1.49 15.326a.902.902 0 01-.24-.631C1.25 13.041 3.71 11.75 5.75 11.75c.95 0 1.813.216 2.546.57a5.48 5.48 0 00-.367 2.156l-.004.407a4.467 4.467 0 01-1.644.549 12.978 12.978 0 01-4.791-.106zM16 8a2 2 0 11-4 0 2 2 0 014 0zm5.68 7.326a.9.9 0 00.24-.631c0-1.653-2.46-2.945-4.5-2.945-.94 0-1.8.212-2.528.562.232.664.36 1.377.367 2.146l.003.426a4.5 4.5 0 001.668.556 13.013 13.013 0 004.75-.114zM10 11.25c-2.41 0-4.75 1.52-4.75 3.438 0 .06.003.118.01.176.51 2.054 2.41 3.386 4.74 3.386 2.33 0 4.23-1.332 4.74-3.386a.94.94 0 00.01-.176c0-1.918-2.34-3.438-4.75-3.438z" />
+                </svg>
+                {currentUser}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={openUserPicker}
+                title="Choose who's working"
+                className="ml-1 flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 bg-white px-3.5 py-1.5 text-sm font-medium text-slate-500 transition hover:border-indigo-300 hover:text-indigo-600"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  className="h-4 w-4"
+                >
+                  <path d="M10 8a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z" />
+                </svg>
+                Who's working?
+              </button>
+            )}
           </div>
         </header>
 
@@ -3819,6 +4225,14 @@ function App() {
                   </button>
                   <button
                     type="button"
+                    onClick={fetchActivity}
+                    disabled={activityLoading}
+                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
+                  >
+                    {activityLoading ? 'Loading...' : 'Recent Activity'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={openDatasetSettings}
                     title="Dataset settings"
                     className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
@@ -3956,7 +4370,7 @@ function App() {
                       <div className="flex overflow-hidden rounded-full border border-emerald-300 bg-emerald-50">
                         <button
                           type="button"
-                          onClick={() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter)}
+                          onClick={() => requireUser(() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter))}
                           disabled={!templatePath || preLabeling}
                           className="px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
                         >
@@ -3986,7 +4400,7 @@ function App() {
                             type="button"
                             onClick={() => {
                               setAttrMenuOpen(false)
-                              openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter)
+                              requireUser(() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter))
                             }}
                             className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-emerald-50"
                           >
@@ -3999,20 +4413,38 @@ function App() {
                             type="button"
                             onClick={() => {
                               setAttrMenuOpen(false)
-                              openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter, lastEditedImage, datasetLastAttrs[lastEditedImage])
+                              requireUser(async (name) => {
+                                let target = name === currentUser ? myLastEdit : null
+                                if (!target) {
+                                  const batch = datasetBatchFilter?.replace(/^raw-images_/, '')
+                                  try {
+                                    const params = new URLSearchParams({ user: name })
+                                    if (batch) params.set('batch', batch)
+                                    const res = await fetch(
+                                      `/api/datasets/${encodeURIComponent(activeDataset)}/last-edit?${params}`,
+                                    )
+                                    const data = await res.json()
+                                    target = res.ok && data.image ? data : null
+                                    setMyLastEdit(target)
+                                  } catch {
+                                    target = null
+                                  }
+                                }
+                                openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter, target?.image, target?.attr_index)
+                              })
                             }}
-                            disabled={!lastEditedImage}
+                            disabled={currentUser ? !myLastEdit?.image : false}
                             className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-emerald-50 disabled:opacity-40"
                           >
                             <span className="block font-medium">From last edited</span>
                             <span className="block text-xs text-slate-400">
-                              {lastEditedImage
-                                ? `Resume at last edited image${
-                                    datasetAttributes?.[datasetLastAttrs[lastEditedImage]]
-                                      ? ` (${datasetAttributes[datasetLastAttrs[lastEditedImage]].alias ?? datasetAttributes[datasetLastAttrs[lastEditedImage]].name})`
+                              {myLastEdit?.image
+                                ? `Resume at your last edited image${
+                                    datasetAttributes?.[myLastEdit.attr_index]
+                                      ? ` (${datasetAttributes[myLastEdit.attr_index].alias ?? datasetAttributes[myLastEdit.attr_index].name})`
                                       : ''
                                   }`
-                                : 'No edits in this batch yet'}
+                                : "You haven't edited this batch yet"}
                             </span>
                           </button>
                         </div>
@@ -4076,6 +4508,7 @@ function App() {
                   singles={similarView.singles}
                   annotations={datasetAnnotations}
                   annotationTimes={datasetAnnotationTimes}
+                  reviewed={datasetReviewed}
                   selected={selectedDatasetImages}
                   onToggleSelect={toggleDatasetImageSelect}
                   onOpenImage={(src) =>
@@ -4106,6 +4539,7 @@ function App() {
                     images={datasetImageGroups[stem] ?? []}
                     annotations={datasetAnnotations}
                     annotationTimes={datasetAnnotationTimes}
+                    reviewed={datasetReviewed}
                     refreshKey={datasetRefreshKey}
                     onImagesLoaded={handleDatasetImagesLoaded}
                     onOpenImage={(src) =>
@@ -4216,6 +4650,7 @@ function App() {
         onSelect={setDatasetModalIndex}
         attributes={datasetAttributes}
         annotations={datasetAnnotations}
+        reviewed={datasetReviewed}
       />
 
       {attrAnnotate && (
@@ -4335,6 +4770,37 @@ function App() {
                       <p className="mt-1 text-sm text-slate-500">
                         Press a number, then use ← → to move.
                       </p>
+                      {(() => {
+                        const merged = mergeReviewerMaps(
+                          datasetReviewed[image]?.[String(attrAnnotate.attrIndex)],
+                          datasetReviewed[image]?.all,
+                        )
+                        const reviewers = sortedReviewers(merged)
+                        if (reviewers.length === 0) return null
+                        return (
+                          <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs text-sky-700">
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            className="h-3.5 w-3.5 shrink-0"
+                          >
+                            <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
+                            <path
+                              fillRule="evenodd"
+                              d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
+                              clipRule="evenodd"
+                            />
+                          </svg>
+                          <span>
+                            Reviewed by{' '}
+                            {reviewers
+                              .map(([user, at]) => `${user} · ${formatRelativeTime(at)}`)
+                              .join(', ')}
+                          </span>
+                        </p>
+                        )
+                      })()}
                       <div className="mt-4 flex flex-col gap-2">
                         {group.options.map((option, i) => {
                           const selected = values[group.indices[i]] === 1
@@ -4942,6 +5408,228 @@ function App() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {activityOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setActivityOpen(false)}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[80vh] overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 p-4">
+              <h3 className="text-lg font-semibold text-slate-800">
+                Recent activity — {activeDataset}
+              </h3>
+              <p className="text-sm text-slate-500">
+                Last {activity.length} action{activity.length === 1 ? '' : 's'}
+              </p>
+            </div>
+            <div className="max-h-[60vh] overflow-auto p-4">
+              {activity.length === 0 ? (
+                <p className="text-sm text-slate-400">No activity recorded yet.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {activity.map((a) => (
+                    <li
+                      key={a.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm"
+                    >
+                      <div className="min-w-0">
+                        <span className="font-medium text-slate-800">{a.user_name}</span>
+                        <span className="text-slate-400">
+                          {' · '}
+                          {{
+                            annotate: 'annotated',
+                            check: 'reviewed',
+                            prelabel: 'prelabeled',
+                            remove_image: 'removed image',
+                          }[a.action] ?? a.action}
+                        </span>
+                        {a.image_path && (
+                          <span className="ml-1 truncate text-slate-400" title={a.image_path}>
+                            · {a.image_path.split('/').pop()}
+                          </span>
+                        )}
+                        {a.detail?.attr_index !== undefined && a.detail.attr_index !== null && (
+                          <span className="ml-1 text-slate-400">
+                            · attr #{a.detail.attr_index}
+                          </span>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-xs text-slate-400">
+                        {formatRelativeTime(a.created_at)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="border-t border-slate-200 p-4 text-right">
+              <button
+                type="button"
+                onClick={() => setActivityOpen(false)}
+                className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {userPickerOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={closeUserPicker}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-slate-800">Who's working?</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Pick your name to attribute annotations and activity.
+            </p>
+
+            {userPickerError && (
+              <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
+                {userPickerError}
+              </p>
+            )}
+
+            {userPickerMode === 'pick' && (
+              <div className="mt-4">
+                {users.length > 0 ? (
+                  <div className="max-h-52 space-y-1 overflow-y-auto">
+                    {users.map((u) => (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => pickUser(u)}
+                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-indigo-50"
+                      >
+                        <span>{u.name}</span>
+                        {u.role === 'superadmin' && (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                            admin
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400">No users yet — create one below.</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserPickerMode('create')
+                    setUserPickerError('')
+                  }}
+                  className="mt-3 w-full rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-indigo-600 transition hover:bg-indigo-50"
+                >
+                  + New user
+                </button>
+              </div>
+            )}
+
+            {userPickerMode === 'password' && (
+              <div className="mt-4">
+                <p className="text-sm text-slate-600">
+                  <span className="font-medium">{userPickerTarget}</span> is an admin account —
+                  enter the password.
+                </p>
+                <input
+                  type="password"
+                  autoFocus
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
+                  className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                  placeholder="Password"
+                />
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setUserPickerMode('pick')}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitPassword}
+                    className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {userPickerMode === 'create' && (
+              <div className="mt-4 space-y-3">
+                <input
+                  type="text"
+                  autoFocus
+                  value={newUserName}
+                  onChange={(e) => setNewUserName(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                  placeholder="Your name"
+                />
+                <div className="flex gap-2">
+                  {['worker', 'superadmin'].map((role) => (
+                    <button
+                      key={role}
+                      type="button"
+                      onClick={() => setNewUserRole(role)}
+                      className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium capitalize transition ${
+                        newUserRole === role
+                          ? 'border-indigo-400 bg-indigo-50 text-indigo-600'
+                          : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {role}
+                    </button>
+                  ))}
+                </div>
+                {newUserRole === 'superadmin' && (
+                  <input
+                    type="password"
+                    value={newUserPassword}
+                    onChange={(e) => setNewUserPassword(e.target.value)}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+                    placeholder="Password"
+                  />
+                )}
+                <div className="flex justify-end gap-2">
+                  {users.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUserPickerMode('pick')
+                        setUserPickerError('')
+                      }}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Back
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={submitNewUser}
+                    className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

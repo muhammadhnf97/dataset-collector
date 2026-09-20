@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -118,6 +121,28 @@ class Annotation(Base, AuditMixin):
     )
 
 
+class User(Base, AuditMixin):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    role = Column(String, nullable=False, default="worker")  # "worker" | "superadmin"
+    password_hash = Column(String, nullable=True)  # required for superadmin; workers unset for now
+
+
+class ActivityLog(Base):
+    __tablename__ = "activity_log"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    user_name = Column(String)  # denormalized: survives user rename/delete
+    action = Column(String, nullable=False)  # e.g. "annotate", "prelabel", "remove_image"
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
+    dataset_name = Column(String, nullable=True)
+    image_path = Column(String, nullable=True)
+    detail = Column(JSON, default=dict)
+
+
 class Archive(Base, AuditMixin):
     __tablename__ = "archives"
 
@@ -128,6 +153,25 @@ class Archive(Base, AuditMixin):
     archive_path = Column(String)
     split = Column(JSON)
     counts = Column(JSON)
+
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200_000)
+    return f"pbkdf2_sha256$200000${salt.hex()}${digest.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        scheme, iterations, salt_hex, digest_hex = stored.split("$")
+        if scheme != "pbkdf2_sha256":
+            return False
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(digest_hex)
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, int(iterations))
+        return hmac.compare_digest(digest, expected)
+    except (ValueError, AttributeError):
+        return False
 
 
 def init_db():
@@ -178,3 +222,8 @@ def init_db():
                 "ALTER TABLE annotations ADD COLUMN last_attr INTEGER"
             )
             conn.commit()
+        conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_activity_log_dataset_created "
+            "ON activity_log (dataset_id, created_at)"
+        )
+        conn.commit()
