@@ -1768,15 +1768,18 @@ def get_dataset_annotations(name: str):
 @app.post("/datasets/{name}/check")
 def check_dataset_image(name: str, payload: dict = Body(...)):
     """Record that `user` reviewed `image` under attribute `attr_index`
-    without changing anything. Skips the insert only when the user's latest
-    annotate/check row already points at this same (image, attr_index) —
-    the same image under a *different* attribute is a distinct review.
+    without changing anything. Upserted: one check row per
+    (dataset, user, image, attr_index) — revisits just bump its
+    `created_at` so the log stays compact and resume stays accurate.
+    Skips entirely when the user's latest activity is an `annotate`
+    on this same pair, since that already stamped the view.
     """
     image = payload.get("image")
     if not image:
         raise HTTPException(status_code=400, detail="image is required")
     user_name = (payload.get("user") or "").strip() or "root"
     attr_index = payload.get("attr_index")
+    valid_attr = attr_index if isinstance(attr_index, int) and not isinstance(attr_index, bool) else None
 
     db = SessionLocal()
     try:
@@ -1795,12 +1798,25 @@ def check_dataset_image(name: str, payload: dict = Body(...)):
             .first()
         )
         last_attr = ((last.detail or {}).get("attr_index") if last else None)
-        if (
-            last
-            and last.image_path == image
-            and last_attr == (attr_index if isinstance(attr_index, int) and not isinstance(attr_index, bool) else None)
-        ):
+        if last and last.image_path == image and last_attr == valid_attr and last.action == "annotate":
             return {"dataset": name, "image": image, "skipped": True}
+
+        attr_expr = func.json_extract(DbActivityLog.detail, "$.attr_index")
+        existing = (
+            db.query(DbActivityLog)
+            .filter(
+                DbActivityLog.dataset_id == db_dataset.id,
+                DbActivityLog.user_name == user_name,
+                DbActivityLog.action == "check",
+                DbActivityLog.image_path == image,
+                attr_expr == valid_attr if valid_attr is not None else attr_expr.is_(None),
+            )
+            .first()
+        )
+        if existing:
+            existing.created_at = datetime.utcnow()
+            db.commit()
+            return {"dataset": name, "image": image, "updated": True}
         log_activity(
             db,
             user_name,
@@ -1808,7 +1824,7 @@ def check_dataset_image(name: str, payload: dict = Body(...)):
             dataset_id=db_dataset.id,
             dataset_name=name,
             image_path=image,
-            detail={"attr_index": attr_index} if isinstance(attr_index, int) and not isinstance(attr_index, bool) else {},
+            detail={"attr_index": attr_index} if valid_attr is not None else {},
         )
         db.commit()
         return {"dataset": name, "image": image, "skipped": False}
