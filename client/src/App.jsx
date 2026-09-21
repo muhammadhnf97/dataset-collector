@@ -488,7 +488,6 @@ function formatRelativeTime(dateString) {
 }
 
 const DATASET_PAGE_LIMIT = 200
-const REVIEW_MIN_DWELL_MS = 1000
 
 // Merge several {user: isoTime} reviewer maps into one, keeping each user's
 // latest timestamp. `datasetReviewed` is {image: {attrKey: {user: time}}}.
@@ -1037,7 +1036,7 @@ function App() {
     test: 10,
   })
   const attrStripRef = useRef(null)
-  const attrImgShownAtRef = useRef(0) // timestamp current correction image appeared (dwell gating)
+  const attrShownRef = useRef(null) // {dataset, image, attrIndex} currently displayed in correction modal
   const [exportResult, setExportResult] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [selectedExportBatches, setSelectedExportBatches] = useState([])
@@ -1802,15 +1801,13 @@ function App() {
   }
 
   // Fire-and-forget: records that the current user finished reviewing
-  // `image` — called when arrow navigation departs it in the correction
-  // modal — even when no attribute changed, so "From last edited" can
-  // resume at the last image actually looked at. Images departed in under
-  // REVIEW_MIN_DWELL_MS are skipped: a fly-past isn't a review.
-  const logAttrCheck = (image) => {
-    if (!attrAnnotate || !image) return
-    if (Date.now() - attrImgShownAtRef.current < REVIEW_MIN_DWELL_MS) return
-    const attrIndex = attrAnnotate.attrIndex
-    fetch(`/api/datasets/${encodeURIComponent(attrAnnotate.dataset)}/check`, {
+  // `image` under attribute `attrIndex` — called whenever a {image, attr}
+  // pair is departed in the correction modal — even when no attribute
+  // changed, so "From last edited" can resume at the last image actually
+  // looked at. Returns the request promise so callers can await it.
+  const logAttrCheck = (dataset, image, attrIndex) => {
+    if (!dataset || !image) return Promise.resolve(null)
+    return fetch(`/api/datasets/${encodeURIComponent(dataset)}/check`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1841,16 +1838,50 @@ function App() {
 
   const attrNextImage = () => {
     if (!attrAnnotate) return
-    const next = Math.min(attrAnnotate.imgIndex + 1, attrAnnotate.images.length - 1)
-    if (next !== attrAnnotate.imgIndex) logAttrCheck(attrAnnotate.images[attrAnnotate.imgIndex])
-    setAttrAnnotate((s) => ({ ...s, imgIndex: next }))
+    if (attrAnnotate.imgIndex >= attrAnnotate.images.length - 1) {
+      finishAttrReview()
+      return
+    }
+    setAttrAnnotate((s) => ({ ...s, imgIndex: s.imgIndex + 1 }))
   }
 
   const attrPrevImage = () => {
     if (!attrAnnotate) return
-    const prev = Math.max(attrAnnotate.imgIndex - 1, 0)
-    if (prev !== attrAnnotate.imgIndex) logAttrCheck(attrAnnotate.images[attrAnnotate.imgIndex])
-    setAttrAnnotate((s) => ({ ...s, imgIndex: prev }))
+    setAttrAnnotate((s) => ({
+      ...s,
+      imgIndex: Math.max(s.imgIndex - 1, 0),
+      done: false,
+      doneReviewed: null,
+    }))
+  }
+
+  // "Done" on the last image: record that final image's check, fetch
+  // cumulative per-user progress for this batch+attribute, then swap the
+  // modal body for the completion screen.
+  const finishAttrReview = async () => {
+    if (!attrAnnotate) return
+    const { dataset, batchFilter, attrIndex, images, imgIndex } = attrAnnotate
+    await logAttrCheck(dataset, images[imgIndex], attrIndex)
+    let reviewed = null
+    try {
+      const params = new URLSearchParams({
+        user: currentUser ?? '',
+        attr_index: String(attrIndex),
+      })
+      if (batchFilter) {
+        params.set('batch', batchFilter.replace(/^raw-images_/, ''))
+      }
+      const r = await fetch(
+        `/api/datasets/${encodeURIComponent(dataset)}/review-progress?${params}`,
+      )
+      const data = await r.json()
+      if (r.ok) reviewed = data.reviewed
+    } catch {
+      // progress stays null — the card still renders without the count
+    }
+    setAttrAnnotate((s) =>
+      s ? { ...s, done: true, doneReviewed: reviewed } : s,
+    )
   }
 
   const removeFromDatasetImage = async () => {
@@ -3121,6 +3152,13 @@ function App() {
       if (e.key === 'Escape') {
         setAttrAnnotate(null)
       }
+      if (attrAnnotate.done) {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault()
+          attrPrevImage()
+        }
+        return
+      }
       if (e.key === 'ArrowLeft') {
         e.preventDefault()
         attrPrevImage()
@@ -3153,9 +3191,35 @@ function App() {
     return () => window.removeEventListener('keydown', handleKey)
   }, [attrAnnotate])
 
+  // Departure logging: any change of the shown {image, attrIndex} pair —
+  // arrows, thumbnail jumps, attribute-dropdown switch — or the modal
+  // closing logs a "check" for the pair that just left the screen.
+  useEffect(() => {
+    if (!attrAnnotate) {
+      const prev = attrShownRef.current
+      if (prev) logAttrCheck(prev.dataset, prev.image, prev.attrIndex)
+      attrShownRef.current = null
+      return
+    }
+    const shown = {
+      dataset: attrAnnotate.dataset,
+      image: attrAnnotate.images[attrAnnotate.imgIndex],
+      attrIndex: attrAnnotate.attrIndex,
+    }
+    const prev = attrShownRef.current
+    if (
+      prev &&
+      (prev.image !== shown.image || prev.attrIndex !== shown.attrIndex) &&
+      attrAnnotate.images.includes(prev.image) // skip if it was just removed
+    ) {
+      logAttrCheck(prev.dataset, prev.image, prev.attrIndex)
+    }
+    attrShownRef.current = shown
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attrAnnotate?.imgIndex, attrAnnotate?.attrIndex, attrAnnotate === null])
+
   useEffect(() => {
     if (!attrAnnotate) return
-    attrImgShownAtRef.current = Date.now()
     const el = attrStripRef.current?.querySelector('[data-active="true"]')
     el?.scrollIntoView({ inline: 'center', block: 'nearest' })
   }, [attrAnnotate?.imgIndex])
@@ -4675,6 +4739,8 @@ function App() {
                       ...s,
                       attrIndex: parseInt(e.target.value, 10),
                       imgIndex: 0,
+                      done: false,
+                      doneReviewed: null,
                     }))
                   }
                   className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 outline-none"
@@ -4687,6 +4753,7 @@ function App() {
                 </select>
               </div>
               <div className="flex items-center gap-2">
+                {!attrAnnotate.done && (
                 <button
                   type="button"
                   title="Remove from dataset"
@@ -4695,6 +4762,7 @@ function App() {
                 >
                   Remove
                 </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -4707,6 +4775,62 @@ function App() {
               </div>
             </div>
 
+            {attrAnnotate.done ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+                <span className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl text-emerald-600">
+                  ✓
+                </span>
+                <div>
+                  <h3 className="text-xl font-semibold text-slate-800">
+                    You're done with{' '}
+                    {attrAnnotate.attributes[attrAnnotate.attrIndex]?.alias ??
+                      attrAnnotate.attributes[attrAnnotate.attrIndex]?.name}
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {attrAnnotate.batchFilter
+                      ? attrAnnotate.batchFilter.replace(/^raw-images_/, '').replace(/_/g, '/')
+                      : attrAnnotate.dataset}
+                    {attrAnnotate.doneReviewed != null && (
+                      <>
+                        {' — '}
+                        {attrAnnotate.doneReviewed} / {attrAnnotate.images.length}{' '}
+                        images reviewed by you
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {attrAnnotate.attributes.map((attr, i) =>
+                    i === attrAnnotate.attrIndex ? null : (
+                      <button
+                        key={attr.name}
+                        type="button"
+                        onClick={() =>
+                          setAttrAnnotate((s) => ({
+                            ...s,
+                            attrIndex: i,
+                            imgIndex: 0,
+                            done: false,
+                            doneReviewed: null,
+                          }))
+                        }
+                        className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                      >
+                        {attr.alias ?? attr.name}
+                      </button>
+                    ),
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAttrAnnotate(null)}
+                  className="mt-2 rounded-full bg-indigo-500 px-6 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+            <>
             {attrAnnotate.images.length > 0 && (
               <div
                 ref={attrStripRef}
@@ -4857,16 +4981,28 @@ function App() {
               >
                 ← Prev
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  attrNextImage()
-                }}
-                className="rounded-full bg-slate-200 px-4 py-1.5 text-sm text-slate-800 transition hover:bg-slate-300"
-              >
-                Next →
-              </button>
+              {attrAnnotate.imgIndex >= attrAnnotate.images.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={finishAttrReview}
+                  className="rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-emerald-600"
+                >
+                  ✓ Done
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    attrNextImage()
+                  }}
+                  className="rounded-full bg-slate-200 px-4 py-1.5 text-sm text-slate-800 transition hover:bg-slate-300"
+                >
+                  Next →
+                </button>
+              )}
             </div>
+            </>
+            )}
           </div>
         </div>
       )}

@@ -1767,9 +1767,10 @@ def get_dataset_annotations(name: str):
 
 @app.post("/datasets/{name}/check")
 def check_dataset_image(name: str, payload: dict = Body(...)):
-    """Record that `user` reviewed `image` (e.g. arrow-navigated onto it in
-    the correction flow) without changing any attribute. Skips the insert
-    when the user's latest annotate/check row already points at this image.
+    """Record that `user` reviewed `image` under attribute `attr_index`
+    without changing anything. Skips the insert only when the user's latest
+    annotate/check row already points at this same (image, attr_index) —
+    the same image under a *different* attribute is a distinct review.
     """
     image = payload.get("image")
     if not image:
@@ -1793,7 +1794,12 @@ def check_dataset_image(name: str, payload: dict = Body(...)):
             .order_by(DbActivityLog.created_at.desc())
             .first()
         )
-        if last and last.image_path == image:
+        last_attr = ((last.detail or {}).get("attr_index") if last else None)
+        if (
+            last
+            and last.image_path == image
+            and last_attr == (attr_index if isinstance(attr_index, int) and not isinstance(attr_index, bool) else None)
+        ):
             return {"dataset": name, "image": image, "skipped": True}
         log_activity(
             db,
@@ -2765,6 +2771,52 @@ def list_activity(dataset: str | None = None, limit: int = 50):
                 for r in rows
             ]
         }
+    finally:
+        db.close()
+
+
+@app.get("/datasets/{name}/review-progress")
+def get_review_progress(
+    name: str,
+    user: str,
+    batch: str | None = None,
+    attr_index: int | None = None,
+):
+    """Distinct images `user` has annotate/check activity on, scoped to this
+    dataset (optionally a batch and attribute group). Rows with no
+    attr_index (whole-image actions) count toward every attribute.
+    """
+    name = unquote(name)
+    if not user:
+        raise HTTPException(status_code=400, detail="user is required")
+    batch = Path(unquote(batch)).name if batch else None
+
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        rows = (
+            db.query(DbActivityLog.image_path, DbActivityLog.detail)
+            .filter(
+                DbActivityLog.dataset_id == db_dataset.id,
+                DbActivityLog.user_name == user,
+                DbActivityLog.action.in_(["annotate", "check"]),
+                DbActivityLog.image_path.isnot(None),
+            )
+            .all()
+        )
+        seen = set()
+        for path, detail in rows:
+            if batch:
+                parts = (path or "").strip("/").split("/")
+                if (parts[-2] if len(parts) >= 2 else None) != batch:
+                    continue
+            ai = (detail or {}).get("attr_index")
+            if attr_index is not None and ai is not None and ai != attr_index:
+                continue
+            seen.add(path)
+        return {"dataset": name, "reviewed": len(seen)}
     finally:
         db.close()
 
