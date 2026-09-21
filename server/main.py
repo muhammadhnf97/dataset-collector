@@ -2916,6 +2916,13 @@ def get_leaderboard(name: str):
             raise HTTPException(status_code=404, detail="Dataset not found")
 
         stats = {}
+        valid_paths = {
+            p
+            for (p,) in db.query(DbImage.path)
+            .join(DbDatasetImage, DbDatasetImage.image_id == DbImage.id)
+            .filter(DbDatasetImage.dataset_id == db_dataset.id)
+            .all()
+        }
 
         def entry(user):
             return stats.setdefault(
@@ -2963,7 +2970,7 @@ def get_leaderboard(name: str):
         )
         for user_name, action, image_path in rows:
             user = user_name or "system"
-            if user == "system":
+            if user == "system" or image_path not in valid_paths:
                 continue
             e = entry(user)
             if action == "annotate":
@@ -2982,6 +2989,108 @@ def get_leaderboard(name: str):
         ]
         board.sort(key=lambda r: (-r["corrections"], -r["reviewed"], r["user"]))
         return {"dataset": name, "leaderboard": board}
+    finally:
+        db.close()
+
+
+@app.get("/datasets/{name}/batch-handlers")
+def get_batch_handlers(name: str):
+    """Per-batch handler stats — which users have annotate/check activity
+    in each batch, how many distinct images, attribute coverage, and their
+    last activity. Powers the "this batch is already handled by X" warning.
+    Coverage = (image, attr_index) pairs seen / (batch images x attr groups),
+    so checking every image under only a few attributes is not 100%.
+    """
+    name = unquote(name)
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        attr_count = 0
+        if db_dataset.framework and db_dataset.model:
+            try:
+                cfg = load_template_config(f"{db_dataset.framework}/{db_dataset.model}")
+                attr_count = len(cfg.get("attributes") or [])
+            except HTTPException:
+                attr_count = 0
+        rows = (
+            db.query(
+                DbActivityLog.user_name,
+                DbActivityLog.image_path,
+                DbActivityLog.detail,
+                DbActivityLog.created_at,
+            )
+            .filter(
+                DbActivityLog.dataset_id == db_dataset.id,
+                DbActivityLog.action.in_(["annotate", "check"]),
+                DbActivityLog.image_path.isnot(None),
+            )
+            .all()
+        )
+        valid_paths = {
+            p
+            for (p,) in db.query(DbImage.path)
+            .join(DbDatasetImage, DbDatasetImage.image_id == DbImage.id)
+            .filter(DbDatasetImage.dataset_id == db_dataset.id)
+            .all()
+        }
+        batch_totals = {}
+        for p in valid_paths:
+            parts = p.strip("/").split("/")
+            batch = parts[-2] if len(parts) >= 2 else None
+            if batch:
+                stem = f"raw-images_{batch}"
+                batch_totals[stem] = batch_totals.get(stem, 0) + 1
+        handlers = {}
+        union_covered = {}
+        for user_name, image_path, detail, created_at in rows:
+            user = user_name or "system"
+            if user == "system" or image_path not in valid_paths:
+                continue
+            parts = image_path.strip("/").split("/")
+            batch = parts[-2] if len(parts) >= 2 else None
+            if not batch:
+                continue
+            stem = f"raw-images_{batch}"
+            ai = (detail or {}).get("attr_index")
+            attr = ai if isinstance(ai, int) and not isinstance(ai, bool) else -1
+            union_covered.setdefault(stem, {}).setdefault(image_path, set()).add(attr)
+            entry = handlers.setdefault(stem, {}).setdefault(
+                user, {"user": user, "images": set(), "covered": {}, "last": None}
+            )
+            entry["images"].add(image_path)
+            entry["covered"].setdefault(image_path, set()).add(attr)
+            if created_at and (entry["last"] is None or created_at > entry["last"]):
+                entry["last"] = created_at
+        out = {}
+        for stem in set(handlers) | set(union_covered):
+            denom = batch_totals.get(stem, 0) * attr_count
+            union_pairs = sum(
+                attr_count if -1 in s else len(s)
+                for s in union_covered.get(stem, {}).values()
+            )
+            lst = []
+            for h in handlers.get(stem, {}).values():
+                covered_pairs = sum(
+                    attr_count if -1 in s else len(s)
+                    for s in h["covered"].values()
+                )
+                lst.append(
+                    {
+                        "user": h["user"],
+                        "images": len(h["images"]),
+                        "coverage": covered_pairs / denom if denom else None,
+                        "last_activity": (
+                            h["last"].isoformat() + "Z" if h["last"] else None
+                        ),
+                    }
+                )
+            out[stem] = {
+                "coverage": union_pairs / denom if denom else None,
+                "handlers": sorted(lst, key=lambda h: -(h["coverage"] or 0)),
+            }
+        return {"dataset": name, "handlers": out}
     finally:
         db.close()
 

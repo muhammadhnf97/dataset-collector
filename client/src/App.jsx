@@ -1085,6 +1085,8 @@ function App() {
   const [exportGroupSplit, setExportGroupSplit] = useState(true)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const exportMenuRef = useRef(null)
+  const [handlersMenuOpen, setHandlersMenuOpen] = useState(false)
+  const handlersMenuRef = useRef(null)
   const [newDatasetMenuOpen, setNewDatasetMenuOpen] = useState(false)
   const newDatasetMenuRef = useRef(null)
   const [archives, setArchives] = useState([])
@@ -1103,6 +1105,8 @@ function App() {
   const [uploadSourceOpen, setUploadSourceOpen] = useState(false)
   const [datasetBatchSources, setDatasetBatchSources] = useState({})
   const [datasetBatchStats, setDatasetBatchStats] = useState({})
+  const [batchHandlers, setBatchHandlers] = useState({})
+  const [batchWarn, setBatchWarn] = useState(null)
   const [datasetRefreshKey, setDatasetRefreshKey] = useState(0)
   const [datasetAttributes, setDatasetAttributes] = useState(null)
   const [selectedDataset, setSelectedDataset] = useState('')
@@ -1543,14 +1547,16 @@ function App() {
 
   const refreshDataset = async (name) => {
     try {
-      const [datasetRes, imagesRes, annotRes] = await Promise.all([
+      const [datasetRes, imagesRes, annotRes, handlersRes] = await Promise.all([
         fetch(`/api/datasets/${encodeURIComponent(name)}`),
         fetch(`/api/datasets/${encodeURIComponent(name)}/images?counts=1`),
         fetch(`/api/datasets/${encodeURIComponent(name)}/annotations`),
+        fetch(`/api/datasets/${encodeURIComponent(name)}/batch-handlers`),
       ])
       const data = await datasetRes.json()
       const imagesData = await imagesRes.json()
       const annotData = await annotRes.json()
+      const handlersData = await handlersRes.json()
       if (datasetRes.ok && imagesRes.ok) {
         setActiveDataset(data.name)
         setDatasetBatches(data.batches ?? [])
@@ -1562,6 +1568,7 @@ function App() {
         setDatasetAnnotationTimes(annotData.updated_at ?? {})
         setDatasetLastAttrs(annotData.last_attr ?? {})
         setDatasetReviewed(annotData.reviewed ?? {})
+        setBatchHandlers(handlersData.handlers ?? {})
         setDatasetRefreshKey((k) => k + 1)
         if (data.framework && data.model) {
           const tpl = `${data.framework}/${data.model}`.toLowerCase()
@@ -1687,11 +1694,26 @@ function App() {
     }
   }
 
-  const openAttrAnnotate = async (name, templateName, batchFilter = null, startImage = null, startAttr = null) => {
+  const openAttrAnnotate = (name, templateName, batchFilter = null, startImage = null, startAttr = null) => {
     if (!templateName) {
       setStatus('Set a model for this dataset before annotating')
       return
     }
+    const all = batchHandlers[batchFilter]?.handlers ?? []
+    const others = all.filter((h) => h.user !== currentUser)
+    if (others.length > 0) {
+      setBatchWarn({
+        batch: batchFilter,
+        handlers: all,
+        proceed: () =>
+          launchAttrAnnotate(name, templateName, batchFilter, startImage, startAttr),
+      })
+      return
+    }
+    launchAttrAnnotate(name, templateName, batchFilter, startImage, startAttr)
+  }
+
+  const launchAttrAnnotate = async (name, templateName, batchFilter = null, startImage = null, startAttr = null) => {
     try {
       const imagesUrl = batchFilter
         ? `/api/datasets/${encodeURIComponent(name)}/images?batch=${encodeURIComponent(batchFilter.replace(/^raw-images_/, ''))}&limit=0`
@@ -3059,7 +3081,7 @@ function App() {
   }, [attrMenuOpen])
 
   useEffect(() => {
-    if (!exportMenuOpen && !newDatasetMenuOpen) return
+    if (!exportMenuOpen && !newDatasetMenuOpen && !handlersMenuOpen) return
     const handleClick = (e) => {
       if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
         setExportMenuOpen(false)
@@ -3070,10 +3092,16 @@ function App() {
       ) {
         setNewDatasetMenuOpen(false)
       }
+      if (
+        handlersMenuRef.current &&
+        !handlersMenuRef.current.contains(e.target)
+      ) {
+        setHandlersMenuOpen(false)
+      }
     }
     window.addEventListener('mousedown', handleClick)
     return () => window.removeEventListener('mousedown', handleClick)
-  }, [exportMenuOpen, newDatasetMenuOpen])
+  }, [exportMenuOpen, newDatasetMenuOpen, handlersMenuOpen])
 
   useEffect(() => {
     if (activePage === 'archives' || archivesOpen || importArchiveOpen) {
@@ -4357,6 +4385,50 @@ function App() {
                     / {datasetBatchStats[datasetBatchFilter]?.total ?? 0}{' '}
                     annotated
                   </span>
+                  {(() => {
+                    const info = batchHandlers[datasetBatchFilter]
+                    const hs = info?.handlers ?? []
+                    if (!hs.length) return null
+                    const pct = info.coverage != null ? Math.round(info.coverage * 100) : null
+                    const hasOthers = hs.some((h) => h.user !== currentUser)
+                    return (
+                      <div ref={handlersMenuRef} className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setHandlersMenuOpen((v) => !v)}
+                          className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition ${
+                            hasOthers
+                              ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                              : 'bg-slate-200/80 text-slate-600 hover:bg-slate-300'
+                          }`}
+                        >
+                          {pct ?? '—'}% ▾
+                        </button>
+                        {handlersMenuOpen && (
+                          <div className="absolute left-0 top-full z-40 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                            <div className="border-b border-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                              Contributors
+                            </div>
+                            {hs.map((h) => (
+                              <div
+                                key={h.user}
+                                className="flex items-center justify-between px-3 py-1.5 text-sm"
+                              >
+                                <span className="text-slate-700">
+                                  {h.user}
+                                  {h.user === currentUser ? ' (you)' : ''}
+                                </span>
+                                <span className="text-xs text-slate-400">
+                                  {h.coverage != null ? `${Math.round(h.coverage * 100)}%` : '—'}
+                                  {h.last_activity ? ` · ${formatRelativeTime(h.last_activity)}` : ''}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                   <button
                     type="button"
                     onClick={() => setDatasetGridPortrait((v) => !v)}
@@ -5434,6 +5506,78 @@ function App() {
           onCancel={() => setConfirmingRemoveDatasets(false)}
           onConfirm={doRemoveDatasets}
         />
+      )}
+
+      {batchWarn && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={() => setBatchWarn(null)}
+        >
+          <div
+            className="w-96 rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15 text-amber-400">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.5}
+                stroke="currentColor"
+                className="h-6 w-6"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z"
+                />
+              </svg>
+            </div>
+            <h3 className="mt-4 text-center text-base font-semibold text-white">
+              Batch already handled
+            </h3>
+            <div className="mt-1.5 space-y-1 text-center text-sm text-slate-400">
+              {batchWarn.handlers.map((h) => {
+                const pct = h.coverage != null ? Math.round(h.coverage * 100) : null
+                return (
+                  <p key={h.user}>
+                    <span className="font-medium text-amber-300">
+                      {h.user}
+                      {h.user === currentUser ? ' (you)' : ''}
+                    </span>
+                    {pct != null
+                      ? ` covered ${pct}% of this batch`
+                      : ` handled ${h.images} images here`}
+                    {h.last_activity ? ` · ${formatRelativeTime(h.last_activity)}` : ''}
+                  </p>
+                )
+              })}
+              <p className="pt-1">
+                Working the same batch may overwrite each other's changes.
+              </p>
+            </div>
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setBatchWarn(null)}
+                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10"
+              >
+                Go back
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const proceed = batchWarn.proceed
+                  setBatchWarn(null)
+                  proceed?.()
+                }}
+                className="flex-1 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-600"
+              >
+                Continue anyway
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {prelabelConfirmOpen && (
