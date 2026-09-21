@@ -1765,6 +1765,56 @@ def get_dataset_annotations(name: str):
     }
 
 
+def _upsert_check(db, db_dataset, user_name, image, attr_index):
+    """One check row per (dataset, user, image, attr_index) — revisits bump
+    its `created_at` so the log stays compact and resume stays accurate.
+    Skips entirely when the user's latest activity is an `annotate` on the
+    same pair, since that already stamped the view. Does not commit.
+    Returns "skipped" | "updated" | "inserted".
+    """
+    valid_attr = attr_index if isinstance(attr_index, int) and not isinstance(attr_index, bool) else None
+    last = (
+        db.query(DbActivityLog)
+        .filter(
+            DbActivityLog.dataset_id == db_dataset.id,
+            DbActivityLog.user_name == user_name,
+            DbActivityLog.action.in_(["annotate", "check"]),
+            DbActivityLog.image_path.isnot(None),
+        )
+        .order_by(DbActivityLog.created_at.desc())
+        .first()
+    )
+    last_attr = ((last.detail or {}).get("attr_index") if last else None)
+    if last and last.image_path == image and last_attr == valid_attr and last.action == "annotate":
+        return "skipped"
+
+    attr_expr = func.json_extract(DbActivityLog.detail, "$.attr_index")
+    existing = (
+        db.query(DbActivityLog)
+        .filter(
+            DbActivityLog.dataset_id == db_dataset.id,
+            DbActivityLog.user_name == user_name,
+            DbActivityLog.action == "check",
+            DbActivityLog.image_path == image,
+            attr_expr == valid_attr if valid_attr is not None else attr_expr.is_(None),
+        )
+        .first()
+    )
+    if existing:
+        existing.created_at = datetime.utcnow()
+        return "updated"
+    log_activity(
+        db,
+        user_name,
+        "check",
+        dataset_id=db_dataset.id,
+        dataset_name=db_dataset.name,
+        image_path=image,
+        detail={"attr_index": attr_index} if valid_attr is not None else {},
+    )
+    return "inserted"
+
+
 @app.post("/datasets/{name}/check")
 def check_dataset_image(name: str, payload: dict = Body(...)):
     """Record that `user` reviewed `image` under attribute `attr_index`
@@ -1779,54 +1829,18 @@ def check_dataset_image(name: str, payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="image is required")
     user_name = (payload.get("user") or "").strip() or "root"
     attr_index = payload.get("attr_index")
-    valid_attr = attr_index if isinstance(attr_index, int) and not isinstance(attr_index, bool) else None
 
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
         if not db_dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
-        last = (
-            db.query(DbActivityLog)
-            .filter(
-                DbActivityLog.dataset_id == db_dataset.id,
-                DbActivityLog.user_name == user_name,
-                DbActivityLog.action.in_(["annotate", "check"]),
-                DbActivityLog.image_path.isnot(None),
-            )
-            .order_by(DbActivityLog.created_at.desc())
-            .first()
-        )
-        last_attr = ((last.detail or {}).get("attr_index") if last else None)
-        if last and last.image_path == image and last_attr == valid_attr and last.action == "annotate":
-            return {"dataset": name, "image": image, "skipped": True}
-
-        attr_expr = func.json_extract(DbActivityLog.detail, "$.attr_index")
-        existing = (
-            db.query(DbActivityLog)
-            .filter(
-                DbActivityLog.dataset_id == db_dataset.id,
-                DbActivityLog.user_name == user_name,
-                DbActivityLog.action == "check",
-                DbActivityLog.image_path == image,
-                attr_expr == valid_attr if valid_attr is not None else attr_expr.is_(None),
-            )
-            .first()
-        )
-        if existing:
-            existing.created_at = datetime.utcnow()
-            db.commit()
-            return {"dataset": name, "image": image, "updated": True}
-        log_activity(
-            db,
-            user_name,
-            "check",
-            dataset_id=db_dataset.id,
-            dataset_name=name,
-            image_path=image,
-            detail={"attr_index": attr_index} if valid_attr is not None else {},
-        )
+        result = _upsert_check(db, db_dataset, user_name, image, attr_index)
         db.commit()
+        if result == "skipped":
+            return {"dataset": name, "image": image, "skipped": True}
+        if result == "updated":
+            return {"dataset": name, "image": image, "updated": True}
         return {"dataset": name, "image": image, "skipped": False}
     finally:
         db.close()
@@ -1852,6 +1866,45 @@ def set_dataset_annotation(name: str, payload: dict):
             raise HTTPException(status_code=404, detail="Image not found")
 
         attr_index = payload.get("attr_index")
+
+        existing_ann = (
+            db.query(DbAnnotation)
+            .filter_by(dataset_id=db_dataset.id, image_id=db_image.id)
+            .first()
+        )
+        old_values = list(existing_ann.values or []) if existing_ann else []
+        old_values += [0] * max(0, len(values) - len(old_values))
+        changed_indices = [i for i in range(len(values)) if old_values[i] != values[i]]
+        pre_labels = list(existing_ann.pre_labels or []) if existing_ann else []
+        corrected = None
+        if pre_labels:
+            corrected = sum(
+                1
+                for i in range(len(values))
+                if (pre_labels[i] if i < len(pre_labels) else 0) != values[i]
+            )
+
+        # A save that flips nothing is semantically a review: keep the
+        # annotation untouched (preserving updated_by credit) and record
+        # the view as an upserted check instead of an annotate row.
+        if not changed_indices:
+            if (
+                existing_ann
+                and isinstance(attr_index, int)
+                and not isinstance(attr_index, bool)
+                and existing_ann.last_attr != attr_index
+            ):
+                existing_ann.last_attr = attr_index
+            _upsert_check(db, db_dataset, user_name, image, attr_index)
+            db.commit()
+            return {
+                "dataset": name,
+                "image": image,
+                "values": values,
+                "updated_by": user_name,
+                "unchanged": True,
+            }
+
         insert_values = {
             "dataset_id": db_dataset.id,
             "image_id": db_image.id,
@@ -1873,6 +1926,14 @@ def set_dataset_annotation(name: str, payload: dict):
             set_=set_map,
         )
         db.execute(stmt)
+        detail = {
+            "changed": len(changed_indices),
+            "changed_indices": changed_indices,
+        }
+        if corrected is not None:
+            detail["corrected"] = corrected
+        if attr_index is not None:
+            detail["attr_index"] = attr_index
         log_activity(
             db,
             user_name,
@@ -1880,7 +1941,7 @@ def set_dataset_annotation(name: str, payload: dict):
             dataset_id=db_dataset.id,
             dataset_name=name,
             image_path=image,
-            detail={"attr_index": attr_index} if attr_index is not None else {},
+            detail=detail,
         )
         db.commit()
     finally:
@@ -2833,6 +2894,94 @@ def get_review_progress(
                 continue
             seen.add(path)
         return {"dataset": name, "reviewed": len(seen)}
+    finally:
+        db.close()
+
+
+@app.get("/datasets/{name}/leaderboard")
+def get_leaderboard(name: str):
+    """Per-user contribution stats for this dataset.
+
+    - corrections: bits in current annotations that differ from the model's
+      pre_labels, credited to updated_by (last writer takes the image).
+    - images_annotated: distinct images with an 'annotate' event.
+    - reviewed: distinct images with annotate/check activity —
+      annotating counts as reviewing.
+    """
+    name = unquote(name)
+    db = SessionLocal()
+    try:
+        db_dataset = db.query(DbDataset).filter_by(name=name).first()
+        if not db_dataset:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+
+        stats = {}
+
+        def entry(user):
+            return stats.setdefault(
+                user,
+                {
+                    "user": user,
+                    "corrections": 0,
+                    "images_corrected": 0,
+                    "annotated": set(),
+                    "reviewed": set(),
+                },
+            )
+
+        anns = (
+            db.query(DbAnnotation.updated_by, DbAnnotation.values, DbAnnotation.pre_labels)
+            .filter(DbAnnotation.dataset_id == db_dataset.id)
+            .all()
+        )
+        for updated_by, values, pre_labels in anns:
+            user = updated_by or "system"
+            if user == "system":
+                continue
+            values = values or []
+            pre_labels = pre_labels or []
+            if not pre_labels:
+                continue
+            n = sum(
+                1
+                for i in range(len(values))
+                if (pre_labels[i] if i < len(pre_labels) else 0) != values[i]
+            )
+            e = entry(user)
+            e["corrections"] += n
+            if n:
+                e["images_corrected"] += 1
+
+        rows = (
+            db.query(DbActivityLog.user_name, DbActivityLog.action, DbActivityLog.image_path)
+            .filter(
+                DbActivityLog.dataset_id == db_dataset.id,
+                DbActivityLog.action.in_(["annotate", "check"]),
+                DbActivityLog.image_path.isnot(None),
+            )
+            .all()
+        )
+        for user_name, action, image_path in rows:
+            user = user_name or "system"
+            if user == "system":
+                continue
+            e = entry(user)
+            if action == "annotate":
+                e["annotated"].add(image_path)
+            e["reviewed"].add(image_path)
+
+        board = [
+            {
+                "user": e["user"],
+                "corrections": e["corrections"],
+                "images_corrected": e["images_corrected"],
+                "images_annotated": len(e["annotated"]),
+                "reviewed": len(e["reviewed"]),
+            }
+            for e in stats.values()
+        ]
+        board.sort(key=lambda r: (-r["corrections"], -r["reviewed"], r["user"]))
+        return {"dataset": name, "leaderboard": board}
     finally:
         db.close()
 
