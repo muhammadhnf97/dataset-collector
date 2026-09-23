@@ -1,4 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import PrelabelStatsModal from './components/PrelabelStatsModal'
+import LeaderboardModal from './components/LeaderboardModal'
+import UserPickerModal from './components/UserPickerModal'
+import ArchivesModal from './components/ArchivesModal'
+import AssignToDatasetModal from './components/AssignToDatasetModal'
+import BatchWarnModal from './components/BatchWarnModal'
+import { formatRelativeTime } from './utils'
 
 function UploadIcon({ className }) {
   return (
@@ -466,25 +473,6 @@ function ArchiveIcon({ className }) {
       />
     </svg>
   )
-}
-
-function formatRelativeTime(dateString) {
-  if (!dateString) return null
-  // Server emits naive UTC; without a suffix the browser parses it as local.
-  const iso = /Z$|[+-]\d{2}:?\d{2}$/.test(dateString)
-    ? dateString
-    : `${dateString}Z`
-  const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return null
-  const seconds = Math.floor((Date.now() - then) / 1000)
-  if (seconds < 5) return 'just now'
-  if (seconds < 60) return `${seconds} sec${seconds === 1 ? '' : 's'} ago`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes} min${minutes === 1 ? '' : 's'} ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
-  const days = Math.floor(hours / 24)
-  return `${days} day${days === 1 ? '' : 's'} ago`
 }
 
 const DATASET_PAGE_LIMIT = 200
@@ -1046,7 +1034,6 @@ function App() {
   const [createDatasetTemplate, setCreateDatasetTemplate] = useState('')
   const [creatingDataset, setCreatingDataset] = useState(false)
   const [assignToDatasetOpen, setAssignToDatasetOpen] = useState(false)
-  const [assignToDatasetBatch, setAssignToDatasetBatch] = useState('')
   const [importBatchOpen, setImportBatchOpen] = useState(false)
   const [availableBatches, setAvailableBatches] = useState([])
   const [importSourceFilter, setImportSourceFilter] = useState('')
@@ -1068,19 +1055,11 @@ function App() {
   )
   const [users, setUsers] = useState([])
   const [userPickerOpen, setUserPickerOpen] = useState(false)
-  const [userPickerMode, setUserPickerMode] = useState('pick') // 'pick' | 'create' | 'password'
-  const [userPickerTarget, setUserPickerTarget] = useState(null) // name pending password check
-  const [userPickerError, setUserPickerError] = useState('')
-  const [newUserName, setNewUserName] = useState('')
-  const [newUserRole, setNewUserRole] = useState('worker')
-  const [newUserPassword, setNewUserPassword] = useState('')
-  const [passwordInput, setPasswordInput] = useState('')
   const pendingUserActionRef = useRef(null)
   const [activityOpen, setActivityOpen] = useState(false)
   const [activity, setActivity] = useState([])
   const [activityLoading, setActivityLoading] = useState(false)
   const [leaderboard, setLeaderboard] = useState([])
-  const [activityLogOpen, setActivityLogOpen] = useState(false)
   const [exportFormat, setExportFormat] = useState('tar')
   const [exportGroupSplit, setExportGroupSplit] = useState(true)
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
@@ -2527,22 +2506,21 @@ function App() {
     }
   }
 
-  const doAssignBatchToDataset = async () => {
-    if (!activeDataset || !assignToDatasetBatch) return
+  const doAssignBatchToDataset = async (batch) => {
+    if (!activeDataset || !batch) return
     try {
       const response = await fetch(
         `/api/datasets/${encodeURIComponent(activeDataset)}/assign`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ batch: assignToDatasetBatch }),
+          body: JSON.stringify({ batch }),
         },
       )
       const data = await response.json()
       if (response.ok) {
         setStatus(`Assigned ${data.batch} to ${data.dataset}`)
         setAssignToDatasetOpen(false)
-        setAssignToDatasetBatch('')
         fetchDatasets()
         openDataset(activeDataset)
       } else {
@@ -2869,13 +2847,6 @@ function App() {
   }
 
   const openUserPicker = () => {
-    setUserPickerMode('pick')
-    setUserPickerTarget(null)
-    setUserPickerError('')
-    setNewUserName('')
-    setNewUserRole('worker')
-    setNewUserPassword('')
-    setPasswordInput('')
     fetchUsers()
     setUserPickerOpen(true)
   }
@@ -2911,69 +2882,6 @@ function App() {
     setUserPickerOpen(false)
   }
 
-  const pickUser = (user) => {
-    if (user.role === 'superadmin') {
-      setUserPickerTarget(user.name)
-      setUserPickerMode('password')
-      setUserPickerError('')
-      setPasswordInput('')
-    } else {
-      confirmUser(user.name)
-    }
-  }
-
-  const submitPassword = async () => {
-    try {
-      const response = await fetch(
-        `/api/users/${encodeURIComponent(userPickerTarget)}/verify`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: passwordInput }),
-        },
-      )
-      const data = await response.json()
-      if (response.ok) {
-        confirmUser(data.name)
-      } else {
-        setUserPickerError(data.detail ?? 'Incorrect password')
-      }
-    } catch {
-      setUserPickerError('Could not reach the server')
-    }
-  }
-
-  const submitNewUser = async () => {
-    const name = newUserName.trim()
-    if (!name) {
-      setUserPickerError('Name required')
-      return
-    }
-    if (newUserRole === 'superadmin' && !newUserPassword) {
-      setUserPickerError('Password required for superadmin')
-      return
-    }
-    try {
-      const response = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          role: newUserRole,
-          password: newUserRole === 'superadmin' ? newUserPassword : undefined,
-        }),
-      })
-      const data = await response.json()
-      if (response.ok) {
-        confirmUser(data.name)
-      } else {
-        setUserPickerError(data.detail ?? 'Could not create user')
-      }
-    } catch {
-      setUserPickerError('Could not reach the server')
-    }
-  }
-
   const switchUser = () => {
     setCurrentUser('')
     localStorage.removeItem('annotatorUser')
@@ -2993,7 +2901,6 @@ function App() {
       if (lbRes.ok && actRes.ok) {
         setLeaderboard(lbData.leaderboard ?? [])
         setActivity(actData.activity ?? [])
-        setActivityLogOpen(false)
         setActivityOpen(true)
       } else {
         setStatus(`Failed: ${lbData.detail ?? actData.detail ?? 'Could not load activity'}`)
@@ -5509,75 +5416,11 @@ function App() {
       )}
 
       {batchWarn && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setBatchWarn(null)}
-        >
-          <div
-            className="w-96 rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15 text-amber-400">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                strokeWidth={1.5}
-                stroke="currentColor"
-                className="h-6 w-6"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z"
-                />
-              </svg>
-            </div>
-            <h3 className="mt-4 text-center text-base font-semibold text-white">
-              Batch already handled
-            </h3>
-            <div className="mt-1.5 space-y-1 text-center text-sm text-slate-400">
-              {batchWarn.handlers.map((h) => {
-                const pct = h.coverage != null ? Math.round(h.coverage * 100) : null
-                return (
-                  <p key={h.user}>
-                    <span className="font-medium text-amber-300">
-                      {h.user}
-                      {h.user === currentUser ? ' (you)' : ''}
-                    </span>
-                    {pct != null
-                      ? ` covered ${pct}% of this batch`
-                      : ` handled ${h.images} images here`}
-                    {h.last_activity ? ` · ${formatRelativeTime(h.last_activity)}` : ''}
-                  </p>
-                )
-              })}
-              <p className="pt-1">
-                Working the same batch may overwrite each other's changes.
-              </p>
-            </div>
-            <div className="mt-5 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setBatchWarn(null)}
-                className="flex-1 rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10"
-              >
-                Go back
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const proceed = batchWarn.proceed
-                  setBatchWarn(null)
-                  proceed?.()
-                }}
-                className="flex-1 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-600"
-              >
-                Continue anyway
-              </button>
-            </div>
-          </div>
-        </div>
+        <BatchWarnModal
+          warn={batchWarn}
+          currentUser={currentUser}
+          onClose={() => setBatchWarn(null)}
+        />
       )}
 
       {prelabelConfirmOpen && (
@@ -5596,384 +5439,27 @@ function App() {
       )}
 
       {prelabelStatsOpen && prelabelStats && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => setPrelabelStatsOpen(false)}
-        >
-          <div
-            className="w-full max-w-4xl max-h-[80vh] overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {(() => {
-              const sortedAttrs = [...prelabelStats.attributes].sort(
-                (a, b) => a.accuracy - b.accuracy,
-              )
-              const meanAcc =
-                sortedAttrs.reduce((n, a) => n + a.accuracy, 0) /
-                Math.max(1, sortedAttrs.length)
-              const weakCount = sortedAttrs.filter(
-                (a) => a.accuracy < 0.6,
-              ).length
-              const metricBar = (v) => (
-                <div className="flex items-center gap-2">
-                  <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200">
-                    <div
-                      className={`h-full rounded-full ${
-                        v >= 0.8
-                          ? 'bg-emerald-500'
-                          : v >= 0.6
-                            ? 'bg-amber-400'
-                            : 'bg-red-400'
-                      }`}
-                      style={{ width: `${Math.min(100, v * 100)}%` }}
-                    />
-                  </div>
-                  <span className="w-12 text-xs tabular-nums text-slate-600">
-                    {(v * 100).toFixed(1)}%
-                  </span>
-                </div>
-              )
-              return (
-                <>
-            <div className="border-b border-slate-200 p-4">
-              <h3 className="text-lg font-semibold text-slate-800">
-                Pre-label stats for {prelabelStats.dataset}
-              </h3>
-              <p className="text-sm text-slate-500">
-                {prelabelStats.total} pre-labeled images · mean accuracy{' '}
-                {(meanAcc * 100).toFixed(1)}%
-                {weakCount > 0 && (
-                  <span className="text-red-500">
-                    {' '}
-                    · {weakCount} attribute{weakCount === 1 ? '' : 's'} below 60%
-                  </span>
-                )}
-              </p>
-            </div>
-            <div className="max-h-[60vh] overflow-auto p-4">
-              <table className="w-full text-left text-sm">
-                <thead className="sticky top-0 bg-white">
-                  <tr className="border-b border-slate-200 text-slate-600">
-                    <th className="py-2 pr-4">Attribute</th>
-                    <th className="py-2 pr-4">Precision</th>
-                    <th className="py-2 pr-4">Recall</th>
-                    <th className="py-2 pr-4">Accuracy</th>
-                    <th className="py-2 pr-4 text-right">TP</th>
-                    <th className="py-2 pr-4 text-right">FP</th>
-                    <th className="py-2 pr-4 text-right">FN</th>
-                    <th className="py-2 pr-4 text-right">TN</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedAttrs.map((attr) => (
-                    <tr key={attr.index} className="border-b border-slate-100">
-                      <td className="py-2 pr-4 font-medium text-slate-800">
-                        {attr.name}
-                      </td>
-                      <td className="py-2 pr-4">{metricBar(attr.precision)}</td>
-                      <td className="py-2 pr-4">{metricBar(attr.recall)}</td>
-                      <td className="py-2 pr-4">{metricBar(attr.accuracy)}</td>
-                      <td className="py-2 pr-4 text-right text-xs tabular-nums text-slate-400">{attr.tp}</td>
-                      <td className="py-2 pr-4 text-right text-xs tabular-nums text-slate-400">{attr.fp}</td>
-                      <td className="py-2 pr-4 text-right text-xs tabular-nums text-slate-400">{attr.fn}</td>
-                      <td className="py-2 pr-4 text-right text-xs tabular-nums text-slate-400">{attr.tn}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-                </>
-              )
-            })()}
-            <div className="border-t border-slate-200 p-4 text-right">
-              <button
-                type="button"
-                onClick={() => setPrelabelStatsOpen(false)}
-                className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <PrelabelStatsModal
+          stats={prelabelStats}
+          onClose={() => setPrelabelStatsOpen(false)}
+        />
       )}
 
       {activityOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => setActivityOpen(false)}
-        >
-          <div
-            className="w-full max-w-2xl max-h-[80vh] overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="border-b border-slate-200 p-4">
-              <h3 className="text-lg font-semibold text-slate-800">
-                Leaderboard — {activeDataset}
-              </h3>
-              <p className="text-sm text-slate-500">
-                Ranked by attribute bits corrected vs the model
-              </p>
-            </div>
-            <div className="max-h-[60vh] overflow-auto p-4">
-              {leaderboard.length === 0 ? (
-                <p className="text-sm text-slate-400">No contributors yet.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {leaderboard.map((u, i) => (
-                    <li
-                      key={u.user}
-                      className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${
-                        i === 0
-                          ? 'border-amber-200 bg-amber-50'
-                          : 'border-slate-100 bg-white'
-                      }`}
-                    >
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span
-                          className={`w-8 shrink-0 text-center ${
-                            i === 0 ? 'text-lg' : 'text-xs font-semibold text-slate-400'
-                          }`}
-                        >
-                          {i === 0 ? '👑' : `#${i + 1}`}
-                        </span>
-                        <div className="min-w-0">
-                          <span className="font-medium text-slate-800">{u.user}</span>
-                          <span className="ml-2 text-xs text-slate-400">
-                            {u.images_annotated} annotated · {u.reviewed} reviewed
-                          </span>
-                        </div>
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <div className={`text-sm font-semibold ${i === 0 ? 'text-amber-700' : 'text-slate-800'}`}>
-                          {u.corrections} corrections
-                        </div>
-                        <div className="text-xs text-slate-400">
-                          {u.images_corrected} image{u.images_corrected === 1 ? '' : 's'} fixed
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="mt-3 text-center">
-                <button
-                  type="button"
-                  onClick={() => setActivityLogOpen((v) => !v)}
-                  className="text-xs font-medium text-slate-400 transition hover:text-slate-600"
-                >
-                  {activityLogOpen ? 'Hide full log' : 'Show full log'}
-                </button>
-              </div>
-              {activityLogOpen && (
-                activity.length === 0 ? (
-                  <p className="mt-2 text-sm text-slate-400">No activity recorded yet.</p>
-                ) : (
-                  <ul className="mt-2 space-y-2 border-t border-slate-100 pt-3">
-                    {activity.map((a) => (
-                      <li
-                        key={a.id}
-                        className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-white px-3 py-2 text-sm"
-                      >
-                        <div className="min-w-0">
-                          <span className="font-medium text-slate-800">{a.user_name}</span>
-                          <span className="text-slate-400">
-                            {' · '}
-                            {{
-                              annotate: 'annotated',
-                              check: 'reviewed',
-                              prelabel: 'prelabeled',
-                              remove_image: 'removed image',
-                            }[a.action] ?? a.action}
-                          </span>
-                          {a.image_path && (
-                            <span className="ml-1 truncate text-slate-400" title={a.image_path}>
-                              · {a.image_path.split('/').pop()}
-                            </span>
-                          )}
-                          {a.detail?.attr_index !== undefined && a.detail.attr_index !== null && (
-                            <span className="ml-1 text-slate-400">
-                              · attr #{a.detail.attr_index}
-                            </span>
-                          )}
-                          {a.action === 'annotate' && a.detail?.changed > 0 && (
-                            <span className="ml-1 text-slate-400">
-                              · {a.detail.changed} bit{a.detail.changed === 1 ? '' : 's'}
-                            </span>
-                          )}
-                        </div>
-                        <span className="shrink-0 text-xs text-slate-400">
-                          {formatRelativeTime(a.created_at)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )
-              )}
-            </div>
-            <div className="border-t border-slate-200 p-4 text-right">
-              <button
-                type="button"
-                onClick={() => setActivityOpen(false)}
-                className="rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <LeaderboardModal
+          dataset={activeDataset}
+          leaderboard={leaderboard}
+          activity={activity}
+          onClose={() => setActivityOpen(false)}
+        />
       )}
 
       {userPickerOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={closeUserPicker}
-        >
-          <div
-            className="w-full max-w-sm rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold text-slate-800">Who's working?</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Pick your name to attribute annotations and activity.
-            </p>
-
-            {userPickerError && (
-              <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
-                {userPickerError}
-              </p>
-            )}
-
-            {userPickerMode === 'pick' && (
-              <div className="mt-4">
-                {users.length > 0 ? (
-                  <div className="max-h-52 space-y-1 overflow-y-auto">
-                    {users.map((u) => (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => pickUser(u)}
-                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-indigo-50"
-                      >
-                        <span>{u.name}</span>
-                        {u.role === 'superadmin' && (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-600">
-                            admin
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-400">No users yet — create one below.</p>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUserPickerMode('create')
-                    setUserPickerError('')
-                  }}
-                  className="mt-3 w-full rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-indigo-600 transition hover:bg-indigo-50"
-                >
-                  + New user
-                </button>
-              </div>
-            )}
-
-            {userPickerMode === 'password' && (
-              <div className="mt-4">
-                <p className="text-sm text-slate-600">
-                  <span className="font-medium">{userPickerTarget}</span> is an admin account —
-                  enter the password.
-                </p>
-                <input
-                  type="password"
-                  autoFocus
-                  value={passwordInput}
-                  onChange={(e) => setPasswordInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
-                  className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
-                  placeholder="Password"
-                />
-                <div className="mt-3 flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setUserPickerMode('pick')}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-                  >
-                    Back
-                  </button>
-                  <button
-                    type="button"
-                    onClick={submitPassword}
-                    className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600"
-                  >
-                    Continue
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {userPickerMode === 'create' && (
-              <div className="mt-4 space-y-3">
-                <input
-                  type="text"
-                  autoFocus
-                  value={newUserName}
-                  onChange={(e) => setNewUserName(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
-                  placeholder="Your name"
-                />
-                <div className="flex gap-2">
-                  {['worker', 'superadmin'].map((role) => (
-                    <button
-                      key={role}
-                      type="button"
-                      onClick={() => setNewUserRole(role)}
-                      className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium capitalize transition ${
-                        newUserRole === role
-                          ? 'border-indigo-400 bg-indigo-50 text-indigo-600'
-                          : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
-                      }`}
-                    >
-                      {role}
-                    </button>
-                  ))}
-                </div>
-                {newUserRole === 'superadmin' && (
-                  <input
-                    type="password"
-                    value={newUserPassword}
-                    onChange={(e) => setNewUserPassword(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
-                    placeholder="Password"
-                  />
-                )}
-                <div className="flex justify-end gap-2">
-                  {users.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUserPickerMode('pick')
-                        setUserPickerError('')
-                      }}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-                    >
-                      Back
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={submitNewUser}
-                    className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600"
-                  >
-                    Continue
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <UserPickerModal
+          users={users}
+          onConfirm={confirmUser}
+          onClose={closeUserPicker}
+        />
       )}
 
       {showExportPanel && (
@@ -6727,93 +6213,16 @@ function App() {
       )}
 
       {archivesOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setArchivesOpen(false)}
-        >
-          <div
-            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold text-slate-800">Archives</h2>
-            <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
-              <span className="text-sm text-slate-700">
-                New archive of {activeDataset}
-              </span>
-              <div className="flex items-center gap-2">
-                <select
-                  value={archiveFormat}
-                  onChange={(e) => setArchiveFormat(e.target.value)}
-                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none"
-                >
-                  <option value="tar">tar</option>
-                  <option value="zip">zip</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={doArchiveDataset}
-                  disabled={archiving}
-                  className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-600 disabled:opacity-40"
-                >
-                  {archiving ? 'Creating...' : 'Create archive'}
-                </button>
-              </div>
-            </div>
-            <div className="mt-4 space-y-2">
-              {archives.filter((a) => a.dataset === activeDataset).length ===
-              0 ? (
-                <p className="py-6 text-center text-sm text-slate-400">
-                  No archives for this dataset yet
-                </p>
-              ) : (
-                archives
-                  .filter((a) => a.dataset === activeDataset)
-                  .map((a) => (
-                    <div
-                      key={a.id}
-                      className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate font-medium text-slate-700">
-                          {a.name}
-                        </div>
-                        <div className="text-xs text-slate-400">
-                          {(a.size / 1024 / 1024).toFixed(1)} MB
-                          {a.created_at &&
-                            ` · ${formatRelativeTime(a.created_at)}`}
-                          {!a.exists && ' · file missing'}
-                        </div>
-                      </div>
-                      <div className="ml-auto flex shrink-0 items-center gap-1">
-                        <a
-                          href={`/api/archives/${a.id}/download`}
-                          className="rounded-md px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
-                        >
-                          Download
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmingDeleteArchive(a)}
-                          className="rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))
-              )}
-            </div>
-            <div className="mt-6 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setArchivesOpen(false)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <ArchivesModal
+          dataset={activeDataset}
+          archives={archives}
+          format={archiveFormat}
+          onFormatChange={setArchiveFormat}
+          archiving={archiving}
+          onCreateArchive={doArchiveDataset}
+          onDeleteArchive={setConfirmingDeleteArchive}
+          onClose={() => setArchivesOpen(false)}
+        />
       )}
 
       {importArchiveOpen && (
@@ -6912,65 +6321,12 @@ function App() {
       )}
 
       {assignToDatasetOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => {
-            setAssignToDatasetOpen(false)
-            setAssignToDatasetBatch('')
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold text-slate-800">
-              Assign batch to {activeDataset}
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Select an import or video-extracted batch to add.
-            </p>
-            <div className="mt-4">
-              {batches.length === 0 ? (
-                <p className="text-sm text-slate-500">No batches available.</p>
-              ) : (
-                <select
-                  value={assignToDatasetBatch}
-                  onChange={(e) => setAssignToDatasetBatch(e.target.value)}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
-                >
-                  {batches.map((batch) => {
-                    const name = typeof batch === 'string' ? batch : batch.name
-                    return (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    )
-                  })}
-                </select>
-              )}
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setAssignToDatasetOpen(false)
-                  setAssignToDatasetBatch('')
-                }}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={doAssignBatchToDataset}
-                disabled={!assignToDatasetBatch || batches.length === 0}
-                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
-              >
-                Assign
-              </button>
-            </div>
-          </div>
-        </div>
+        <AssignToDatasetModal
+          dataset={activeDataset}
+          batches={batches}
+          onAssign={doAssignBatchToDataset}
+          onClose={() => setAssignToDatasetOpen(false)}
+        />
       )}
 
     </div>

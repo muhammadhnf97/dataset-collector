@@ -2013,6 +2013,12 @@ def get_prelabel_stats(name: str):
                     counts[i]["tn"] += 1
 
         labels = _attribute_labels(attributes, vector_length)
+        index_groups = ["Other"] * vector_length
+        for group in attributes:
+            group_label = group.get("alias") or group["name"]
+            for idx in group.get("indices", []):
+                if 0 <= idx < vector_length:
+                    index_groups[idx] = group_label
         stats = []
         for i, c in enumerate(counts):
             precision = c["tp"] / (c["tp"] + c["fp"]) if (c["tp"] + c["fp"]) > 0 else 0
@@ -2021,6 +2027,7 @@ def get_prelabel_stats(name: str):
             stats.append({
                 "index": i,
                 "name": labels[i],
+                "group": index_groups[i],
                 "tp": c["tp"],
                 "fp": c["fp"],
                 "fn": c["fn"],
