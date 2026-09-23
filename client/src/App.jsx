@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PrelabelStatsModal from './components/PrelabelStatsModal'
 import LeaderboardModal from './components/LeaderboardModal'
 import UserPickerModal from './components/UserPickerModal'
@@ -501,7 +501,7 @@ const mergeReviewerMaps = (...maps) => {
 const sortedReviewers = (merged) =>
   Object.entries(merged).sort((a, b) => (b[1] ?? '').localeCompare(a[1] ?? ''))
 
-function DatasetImageThumb({
+const DatasetImageThumb = memo(function DatasetImageThumb({
   src,
   isAnnotated,
   annotatedAgo,
@@ -513,10 +513,15 @@ function DatasetImageThumb({
   onOpen,
   onToggle,
 }) {
-  const reviewers = reviewedBy
-    ? sortedReviewers(mergeReviewerMaps(...Object.values(reviewedBy))).map(
-        ([user, at]) => ({ user, ago: formatRelativeTime(at) }),
-      )
+  const mergedReviewers = useMemo(
+    () => (reviewedBy ? mergeReviewerMaps(...Object.values(reviewedBy)) : null),
+    [reviewedBy],
+  )
+  const reviewers = mergedReviewers
+    ? sortedReviewers(mergedReviewers).map(([user, at]) => ({
+        user,
+        ago: formatRelativeTime(at),
+      }))
     : []
   return (
     <button
@@ -613,7 +618,7 @@ function DatasetImageThumb({
       )}
     </button>
   )
-}
+})
 
 function DatasetBatchSection({
   dataset,
@@ -1957,7 +1962,7 @@ function App() {
     )
   }
 
-  const toggleDatasetImageSelect = (src) => {
+  const toggleDatasetImageSelect = useCallback((src) => {
     setSelectedDatasetImages((prev) => {
       const next = new Set(prev)
       if (next.has(src)) {
@@ -1967,7 +1972,12 @@ function App() {
       }
       return next
     })
-  }
+  }, [])
+
+  const openDatasetImage = useCallback(
+    (src) => setDatasetModalIndex(datasetActiveImages.indexOf(src)),
+    [datasetActiveImages],
+  )
 
   const removeSelectedDatasetImages = async () => {
     setConfirmingRemoveDatasetImages(false)
@@ -3887,6 +3897,8 @@ function App() {
                     <SkeletonImg
                       src={`/api${image.path ?? image}`}
                       alt=""
+                      loading="lazy"
+                      decoding="async"
                       className="aspect-video w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105"
                     />
                   </button>
@@ -4517,9 +4529,7 @@ function App() {
                   reviewed={datasetReviewed}
                   selected={selectedDatasetImages}
                   onToggleSelect={toggleDatasetImageSelect}
-                  onOpenImage={(src) =>
-                    setDatasetModalIndex(datasetActiveImages.indexOf(src))
-                  }
+                  onOpenImage={openDatasetImage}
                   onKeepRest={selectClusterRest}
                   onKeepRestAll={selectAllClusterRest}
                   threshold={similarThreshold}
@@ -4548,9 +4558,7 @@ function App() {
                     reviewed={datasetReviewed}
                     refreshKey={datasetRefreshKey}
                     onImagesLoaded={handleDatasetImagesLoaded}
-                    onOpenImage={(src) =>
-                      setDatasetModalIndex(datasetActiveImages.indexOf(src))
-                    }
+                    onOpenImage={openDatasetImage}
                     removeMode={datasetRemoveMode}
                     selected={selectedDatasetImages}
                     onToggleSelect={toggleDatasetImageSelect}
