@@ -5,6 +5,13 @@ import UserPickerModal from './components/UserPickerModal'
 import ArchivesModal from './components/ArchivesModal'
 import AssignToDatasetModal from './components/AssignToDatasetModal'
 import BatchWarnModal from './components/BatchWarnModal'
+import ExportDatasetModal from './components/ExportDatasetModal'
+import CreateDatasetModal from './components/CreateDatasetModal'
+import ImportBatchModal from './components/ImportBatchModal'
+import DatasetSettingsModal from './components/DatasetSettingsModal'
+import UploadSourceModal from './components/UploadSourceModal'
+import SourceModal from './components/SourceModal'
+import ImportArchiveModal from './components/ImportArchiveModal'
 import { formatRelativeTime } from './utils'
 
 function UploadIcon({ className }) {
@@ -1014,9 +1021,6 @@ function App() {
   const [datasetBatchFilter, setDatasetBatchFilter] = useState(null)
   const [showExportPanel, setShowExportPanel] = useState(false)
   const [datasetSettingsOpen, setDatasetSettingsOpen] = useState(false)
-  const [datasetNameEdit, setDatasetNameEdit] = useState('')
-  const [datasetFrameworkEdit, setDatasetFrameworkEdit] = useState('')
-  const [datasetModelEdit, setDatasetModelEdit] = useState('')
   const [savingDatasetSettings, setSavingDatasetSettings] = useState(false)
   const [datasetSplit, setDatasetSplit] = useState({
     train: 70,
@@ -1030,14 +1034,9 @@ function App() {
   const [selectedExportBatches, setSelectedExportBatches] = useState([])
   const [newDatasetName, setNewDatasetName] = useState('')
   const [createDatasetOpen, setCreateDatasetOpen] = useState(false)
-  const [createDatasetName, setCreateDatasetName] = useState('')
-  const [createDatasetTemplate, setCreateDatasetTemplate] = useState('')
   const [creatingDataset, setCreatingDataset] = useState(false)
   const [assignToDatasetOpen, setAssignToDatasetOpen] = useState(false)
   const [importBatchOpen, setImportBatchOpen] = useState(false)
-  const [availableBatches, setAvailableBatches] = useState([])
-  const [importSourceFilter, setImportSourceFilter] = useState('')
-  const [selectedImportBatches, setSelectedImportBatches] = useState(new Set())
   const [importingBatch, setImportingBatch] = useState(false)
   const [preLabeling, setPreLabeling] = useState(false)
   const [prelabelConfirmOpen, setPrelabelConfirmOpen] = useState(false)
@@ -1074,12 +1073,10 @@ function App() {
   const [archiving, setArchiving] = useState(false)
   const [importArchiveOpen, setImportArchiveOpen] = useState(false)
   const [uploadingArchive, setUploadingArchive] = useState(false)
-  const importFileRef = useRef(null)
   const [restoringArchiveId, setRestoringArchiveId] = useState(null)
   const [confirmingDeleteArchive, setConfirmingDeleteArchive] = useState(null)
   const [sources, setSources] = useState([])
   const [sourceModalOpen, setSourceModalOpen] = useState(false)
-  const [newSourceName, setNewSourceName] = useState('')
   const [uploadSourceId, setUploadSourceId] = useState('')
   const [uploadSourceOpen, setUploadSourceOpen] = useState(false)
   const [datasetBatchSources, setDatasetBatchSources] = useState({})
@@ -1155,37 +1152,6 @@ function App() {
     () => rawSources.find((r) => r.source === selectedRaw) ?? null,
     [rawSources, selectedRaw],
   )
-
-  const importSources = useMemo(() => {
-    const map = {}
-    for (const b of availableBatches) {
-      const s = b.source
-      const key = s ? `s-${s.id}` : 'none'
-      if (!map[key]) {
-        map[key] = {
-          key,
-          id: s?.id ?? null,
-          label: s ? `${s.name} · v${s.version}` : 'Untagged',
-          count: 0,
-        }
-      }
-      map[key].count++
-    }
-    return Object.values(map).sort((a, b) => {
-      if (a.key === 'none') return 1
-      if (b.key === 'none') return -1
-      return a.label.localeCompare(b.label)
-    })
-  }, [availableBatches])
-
-  const importFilteredBatches = useMemo(() => {
-    if (!importSourceFilter) return availableBatches
-    return availableBatches.filter((b) =>
-      importSourceFilter === 'none'
-        ? !b.source
-        : b.source?.id === Number(importSourceFilter),
-    )
-  }, [availableBatches, importSourceFilter])
 
   const datasetImages = useMemo(
     () => datasetBatches.flatMap((stem) => datasetImageGroups[stem] ?? []),
@@ -1448,7 +1414,6 @@ function App() {
       })
       const data = await response.json()
       if (response.ok) {
-        setNewSourceName('')
         setStatus(`Created source ${data.name} · v${data.version}`)
         await fetchSources()
         return data
@@ -1477,15 +1442,6 @@ function App() {
       setStatus('Failed: could not reach the server')
     }
   }
-
-  const sourcesByName = useMemo(() => {
-    const map = {}
-    for (const s of sources) {
-      if (!map[s.name]) map[s.name] = []
-      map[s.name].push(s)
-    }
-    return Object.entries(map)
-  }, [sources])
 
   const doSplit = async () => {
     const label = selectedBatch ? `batch ${selectedBatch}` : 'loose imports'
@@ -2531,10 +2487,10 @@ function App() {
     }
   }
 
-  const doCreateDataset = async () => {
+  const doCreateDataset = async (name, template) => {
     if (creatingDataset) return
-    const name = createDatasetName.trim()
-    if (!name) return
+    const trimmed = (name ?? '').trim()
+    if (!trimmed) return
     setCreatingDataset(true)
     setCreateDatasetOpen(false)
     try {
@@ -2542,8 +2498,8 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name,
-          template: createDatasetTemplate,
+          name: trimmed,
+          template,
         }),
       })
       const createData = await createRes.json()
@@ -2551,8 +2507,6 @@ function App() {
         setStatus(`Failed: ${createData.detail ?? 'Unknown error'}`)
         return
       }
-      setCreateDatasetName('')
-      setCreateDatasetTemplate('')
       setStatus(`Created dataset ${createData.dataset}`)
       await fetchDatasets()
     } catch {
@@ -2562,21 +2516,8 @@ function App() {
     }
   }
 
-  const openImportBatch = async () => {
-    setImportBatchOpen(true)
-    setImportSourceFilter('')
-    setSelectedImportBatches(new Set())
-    try {
-      const response = await fetch('/api/batches/covers')
-      const data = await response.json()
-      setAvailableBatches(data.batches ?? [])
-    } catch {
-      setStatus('Failed: could not reach the server')
-    }
-  }
-
-  const doImportBatch = async () => {
-    if (selectedImportBatches.size === 0) return
+  const doImportBatch = async (batchIds) => {
+    if (!batchIds || batchIds.length === 0) return
     setImportingBatch(true)
     try {
       const response = await fetch(
@@ -2584,9 +2525,7 @@ function App() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            batch_ids: Array.from(selectedImportBatches),
-          }),
+          body: JSON.stringify({ batch_ids: batchIds }),
         },
       )
       const data = await response.json()
@@ -2596,7 +2535,6 @@ function App() {
       }
       setStatus(`Imported ${data.count} images from ${data.batches.length} batches`)
       setImportBatchOpen(false)
-      setSelectedImportBatches(new Set())
       fetchDatasets()
       refreshDataset(activeDataset)
     } catch {
@@ -2607,13 +2545,7 @@ function App() {
   }
 
   const openDatasetSettings = () => {
-    const ds = datasets.find((d) => d.name === activeDataset)
-    if (!ds) return
-    setDatasetNameEdit(ds.name)
-    const match = templates.find(
-      (t) => t.framework === ds.framework && t.label === ds.model,
-    )
-    setDatasetModelEdit(match ? match.name : '')
+    if (!datasets.some((d) => d.name === activeDataset)) return
     setDatasetSettingsOpen(true)
   }
 
@@ -2638,8 +2570,8 @@ function App() {
     }
   }
 
-  const doSaveDatasetSettings = async () => {
-    if (!datasetNameEdit.trim()) {
+  const doSaveDatasetSettings = async (name, template) => {
+    if (!name?.trim()) {
       setStatus('Dataset name is required')
       return
     }
@@ -2651,8 +2583,8 @@ function App() {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            name: datasetNameEdit.trim(),
-            template: datasetModelEdit,
+            name: name.trim(),
+            template,
           }),
         },
       )
@@ -4165,7 +4097,7 @@ function App() {
                 <div className="ml-auto flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={openImportBatch}
+                    onClick={() => setImportBatchOpen(true)}
                     className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
                   >
                     Import batch
@@ -5463,753 +5395,82 @@ function App() {
       )}
 
       {showExportPanel && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setShowExportPanel(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold text-slate-800">
-              Export {activeDataset}
-            </h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Set the split ratio before exporting.
-            </p>
-            <div className="mt-4 flex justify-center gap-4">
-              {['train', 'val', 'test'].map((key) => (
-                <label
-                  key={key}
-                  className="flex flex-col items-center gap-1 text-sm font-medium text-slate-700"
-                >
-                  <span className="capitalize">{key}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={datasetSplit[key]}
-                    onChange={(e) =>
-                      setDatasetSplit((s) => ({
-                        ...s,
-                        [key]: Number(e.target.value) || 0,
-                      }))
-                    }
-                    className="w-16 rounded-lg border border-slate-300 bg-white px-1.5 py-2 text-center text-sm text-slate-800"
-                  />
-                </label>
-              ))}
-            </div>
-
-            <div className="mt-4 flex items-center justify-center gap-2">
-              <label className="text-sm font-medium text-slate-700">
-                Format
-              </label>
-              <select
-                value={exportFormat}
-                onChange={(e) => setExportFormat(e.target.value)}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
-              >
-                <option value="tar">tar</option>
-                <option value="zip">zip</option>
-                <option value="rar">rar</option>
-              </select>
-            </div>
-
-            <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={exportGroupSplit}
-                onChange={(e) => setExportGroupSplit(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-              />
-              <span>
-                <span className="font-medium">Identity-aware split</span>
-                <span className="block text-xs text-slate-400">
-                  Keeps near-duplicate crops of the same person in one split
-                  (prevents val/test leakage)
-                </span>
-              </span>
-            </label>
-
-            <div className="mt-4">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-700">
-                  Batches
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSelectedExportBatches(
-                      selectedExportBatches.length === datasetBatches.length
-                        ? []
-                        : [...datasetBatches],
-                    )
-                  }
-                  className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
-                >
-                  {selectedExportBatches.length === datasetBatches.length
-                    ? 'Deselect all'
-                    : 'Select all'}
-                </button>
-              </div>
-              <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
-                {datasetBatches.length === 0 && (
-                  <p className="text-sm text-slate-500">No batches imported</p>
-                )}
-                {datasetBatches.map((batch) => (
-                  <label
-                    key={batch}
-                    className="flex items-center gap-2 py-1 text-sm text-slate-700"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedExportBatches.includes(batch)}
-                      onChange={(e) =>
-                        setSelectedExportBatches((prev) =>
-                          e.target.checked
-                            ? [...new Set([...prev, batch])]
-                            : prev.filter((b) => b !== batch),
-                        )
-                      }
-                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span className="truncate" title={batch}>
-                      {batch}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {exportResult && (
-              <div className="mt-4 flex flex-col items-center gap-2 text-sm text-slate-600">
-                <span>
-                  train {exportResult.counts.train} / val {exportResult.counts.val} / test {exportResult.counts.test}
-                  {exportResult.split_strategy === 'cluster' && (
-                    <span className="text-slate-400"> · identity-aware</span>
-                  )}
-                </span>
-                <a
-                  href={`/api${exportResult.download}`}
-                  className="rounded-full border border-emerald-500/50 bg-emerald-500/10 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-500/20"
-                >
-                  Download
-                </a>
-              </div>
-            )}
-
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowExportPanel(false)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={doExportDataset}
-                disabled={exporting || selectedExportBatches.length === 0}
-                className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
-              >
-                {exporting ? 'Exporting...' : 'Export'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ExportDatasetModal
+          dataset={activeDataset}
+          batches={datasetBatches}
+          split={datasetSplit}
+          onSplitChange={setDatasetSplit}
+          format={exportFormat}
+          onFormatChange={setExportFormat}
+          groupSplit={exportGroupSplit}
+          onGroupSplitChange={setExportGroupSplit}
+          selectedBatches={selectedExportBatches}
+          onSelectedBatchesChange={setSelectedExportBatches}
+          result={exportResult}
+          exporting={exporting}
+          onExport={doExportDataset}
+          onClose={() => setShowExportPanel(false)}
+        />
       )}
 
       {createDatasetOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => {
-            setCreateDatasetOpen(false)
-            setCreateDatasetName('')
-            setCreateDatasetTemplate('')
-          }}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold text-slate-800">New Dataset</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Enter a name and pick a model template.
-            </p>
-            <div className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-700">
-                  Name
-                </label>
-                <input
-                  type="text"
-                  value={createDatasetName}
-                  onChange={(e) => setCreateDatasetName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') doCreateDataset()
-                  }}
-                  placeholder="my-dataset"
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700">
-                  Model template
-                </label>
-                <select
-                  value={createDatasetTemplate}
-                  onChange={(e) => setCreateDatasetTemplate(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800"
-                >
-                  <option value="">No template</option>
-                  {Object.entries(
-                    templates.reduce((acc, t) => {
-                      const group = t.framework || 'Other'
-                      if (!acc[group]) acc[group] = []
-                      acc[group].push(t)
-                      return acc
-                    }, {}),
-                  )
-                    .sort((a, b) => a[0].localeCompare(b[0]))
-                    .map(([model, items]) => (
-                      <optgroup key={model} label={model}>
-                        {items.map((t) => (
-                          <option key={t.name} value={t.name}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                </select>
-              </div>
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setCreateDatasetOpen(false)
-                  setCreateDatasetName('')
-                  setCreateDatasetTemplate('')
-                }}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={doCreateDataset}
-                disabled={!createDatasetName.trim() || creatingDataset}
-                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
-              >
-                {creatingDataset ? 'Creating...' : 'Create'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CreateDatasetModal
+          templates={templates}
+          creating={creatingDataset}
+          onCreate={doCreateDataset}
+          onClose={() => setCreateDatasetOpen(false)}
+        />
       )}
 
       {importBatchOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => {
-            setImportBatchOpen(false)
-            setSelectedImportBatches(new Set())
-          }}
-        >
-          <div
-            className="w-full max-w-2xl rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold text-slate-800">Import Batch</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Pick a source, then batches to import into {activeDataset}.
-            </p>
-            {importSources.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setImportSourceFilter('')}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                    importSourceFilter === ''
-                      ? 'bg-indigo-500 text-white shadow'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  All · {availableBatches.length}
-                </button>
-                {importSources.map((s) => (
-                  <button
-                    key={s.key}
-                    type="button"
-                    onClick={() =>
-                      setImportSourceFilter(
-                        s.id === null ? 'none' : String(s.id),
-                      )
-                    }
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                      importSourceFilter ===
-                      (s.id === null ? 'none' : String(s.id))
-                        ? 'bg-indigo-500 text-white shadow'
-                        : s.key === 'none'
-                          ? 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                          : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
-                    }`}
-                  >
-                    {s.label} · {s.count}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="mt-4">
-              {importFilteredBatches.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  {availableBatches.length === 0
-                    ? 'No batches available.'
-                    : 'No batches for this source.'}
-                </p>
-              ) : (
-                <div className="grid max-h-96 grid-cols-4 gap-3 overflow-y-auto p-1">
-                  {importFilteredBatches.map((batch) => {
-                    const selected = batch.id && selectedImportBatches.has(batch.id)
-                    const imported = datasetBatches.includes(
-                      batch.name.replace(/\//g, '_'),
-                    )
-                    return (
-                      <button
-                        key={batch.id ?? batch.name}
-                        type="button"
-                        title={batch.name}
-                        disabled={!batch.id}
-                        onClick={() =>
-                          setSelectedImportBatches((prev) => {
-                            const next = new Set(prev)
-                            if (next.has(batch.id)) {
-                              next.delete(batch.id)
-                            } else {
-                              next.add(batch.id)
-                            }
-                            return next
-                          })
-                        }
-                        className={`group relative aspect-video w-full overflow-hidden rounded-lg border text-left shadow-sm transition hover:shadow-md ${
-                          selected
-                            ? 'border-indigo-500 ring-2 ring-indigo-500'
-                            : 'border-slate-200'
-                        }`}
-                      >
-                        {batch.cover ? (
-                          <img
-                            src={`/api${batch.cover}`}
-                            alt=""
-                            className="absolute inset-0 h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center bg-slate-100 text-xs text-slate-400">
-                            No image
-                          </div>
-                        )}
-                        <div className="absolute left-0 right-0 top-0 bg-black/70 px-2 py-1 text-left opacity-0 transition group-hover:opacity-100">
-                          <p className="text-[10px] font-medium text-white">
-                            {batch.name}
-                          </p>
-                        </div>
-                        {imported && (
-                          <div className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-sm font-bold text-white shadow">
-                            ✓
-                          </div>
-                        )}
-                        <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-1 bg-black/60 px-2 py-1">
-                          <p className="truncate text-[10px] font-medium text-white">
-                            {batch.name}
-                          </p>
-                          <span className="shrink-0 text-[10px] text-white/70">
-                            {batch.count ?? 0}
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setImportBatchOpen(false)
-                  setSelectedImportBatches(new Set())
-                }}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={doImportBatch}
-                disabled={selectedImportBatches.size === 0 || importingBatch}
-                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
-              >
-                {importingBatch ? 'Importing...' : 'Import'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ImportBatchModal
+          dataset={activeDataset}
+          importedBatches={datasetBatches}
+          importing={importingBatch}
+          onImport={doImportBatch}
+          onError={() => setStatus('Failed: could not reach the server')}
+          onClose={() => setImportBatchOpen(false)}
+        />
       )}
 
       {datasetSettingsOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setDatasetSettingsOpen(false)}
-        >
-          <div
-            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold text-slate-800">
-              Dataset Settings
-            </h2>
-            <div className="mt-4 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Name
-                </label>
-                <input
-                  type="text"
-                  value={datasetNameEdit}
-                  onChange={(e) => setDatasetNameEdit(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none focus:border-indigo-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Model template
-                </label>
-                <select
-                  value={datasetModelEdit}
-                  onChange={(e) => setDatasetModelEdit(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none"
-                >
-                  <option value="">No template</option>
-                  {Object.entries(
-                    templates.reduce((acc, t) => {
-                      const group = t.framework || 'Other'
-                      if (!acc[group]) acc[group] = []
-                      acc[group].push(t)
-                      return acc
-                    }, {}),
-                  )
-                    .sort((a, b) => a[0].localeCompare(b[0]))
-                    .map(([framework, items]) => (
-                      <optgroup key={framework} label={framework}>
-                        {items.map((t) => (
-                          <option key={t.name} value={t.name}>
-                            {t.label}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                </select>
-              </div>
-            </div>
-
-            {datasetBatches.length > 0 && (
-              <div className="mt-6 border-t border-slate-200 pt-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Batches in dataset
-                </h3>
-                <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
-                  {datasetBatches.map((batch) => (
-                    <div
-                      key={batch}
-                      className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                    >
-                      <span className="font-medium text-slate-700">{batch}</span>
-                      <span className="text-xs text-slate-400">
-                        {datasetBatchStats[batch]?.total ?? 0} images
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDatasetBatchToRemove(batch)
-                          setConfirmingRemoveDatasetBatch(true)
-                        }}
-                        className="ml-auto rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="mt-6 border-t border-slate-200 pt-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-red-400">
-                Danger zone
-              </h3>
-              <div className="mt-3 flex items-center justify-between rounded-lg border border-red-200 bg-red-50/50 px-3 py-2">
-                <span className="text-sm text-slate-700">
-                  Remove this dataset
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setConfirmingRemoveActiveDataset(true)}
-                  className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-600"
-                >
-                  Remove dataset
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDatasetSettingsOpen(false)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={doSaveDatasetSettings}
-                disabled={
-                  savingDatasetSettings ||
-                  !datasetNameEdit.trim() ||
-                  !datasetModelEdit
-                }
-                className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-40"
-              >
-                {savingDatasetSettings ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <DatasetSettingsModal
+          dataset={datasets.find((d) => d.name === activeDataset)}
+          templates={templates}
+          batches={datasetBatches}
+          batchStats={datasetBatchStats}
+          saving={savingDatasetSettings}
+          onSave={doSaveDatasetSettings}
+          onRemoveBatch={(batch) => {
+            setDatasetBatchToRemove(batch)
+            setConfirmingRemoveDatasetBatch(true)
+          }}
+          onRemoveDataset={() => setConfirmingRemoveActiveDataset(true)}
+          onClose={() => setDatasetSettingsOpen(false)}
+        />
       )}
 
       {uploadSourceOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setUploadSourceOpen(false)}
-        >
-          <div
-            className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold text-slate-800">
-              Select source
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Batches created from this upload will be tagged with the
-              selected source.
-            </p>
-            <div className="mt-4 space-y-2">
-              <button
-                type="button"
-                onClick={() => setUploadSourceId('')}
-                className={`flex w-full items-center rounded-lg border px-3 py-2 text-sm transition ${
-                  uploadSourceId === ''
-                    ? 'border-indigo-400 bg-indigo-50 font-medium text-indigo-700'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                No source
-              </button>
-              {sourcesByName.map(([name, versions]) => (
-                <div
-                  key={name}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-slate-700">
-                      {name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const s = await createSource(name)
-                        if (s) setUploadSourceId(String(s.id))
-                      }}
-                      className="rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100"
-                    >
-                      + version
-                    </button>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {versions.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => setUploadSourceId(String(s.id))}
-                        className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
-                          uploadSourceId === String(s.id)
-                            ? 'bg-indigo-500 text-white shadow'
-                            : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
-                        }`}
-                      >
-                        v{s.version}
-                        <span className="ml-1 opacity-60">
-                          {s.batches} batch{s.batches === 1 ? '' : 'es'}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2">
-              <input
-                type="text"
-                value={newSourceName}
-                onChange={(e) => setNewSourceName(e.target.value)}
-                onKeyDown={async (e) => {
-                  if (e.key === 'Enter') {
-                    const s = await createSource(newSourceName)
-                    if (s) setUploadSourceId(String(s.id))
-                  }
-                }}
-                placeholder="New source name (e.g. Shop A)"
-                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 outline-none"
-              />
-              <button
-                type="button"
-                onClick={async () => {
-                  const s = await createSource(newSourceName)
-                  if (s) setUploadSourceId(String(s.id))
-                }}
-                disabled={!newSourceName.trim()}
-                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
-              >
-                Add &amp; select
-              </button>
-            </div>
-            <div className="mt-5 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setUploadSourceOpen(false)}
-                className="flex-1 rounded-lg border border-slate-300 py-2 text-sm text-slate-600 transition hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setUploadSourceOpen(false)
-                  tarInputRef.current?.click()
-                }}
-                className="flex-1 rounded-lg bg-indigo-500 py-2 text-sm font-medium text-white transition hover:bg-indigo-600"
-              >
-                Continue → choose file
-              </button>
-            </div>
-          </div>
-        </div>
+        <UploadSourceModal
+          sources={sources}
+          selectedId={uploadSourceId}
+          onSelect={setUploadSourceId}
+          onCreateSource={createSource}
+          onContinue={() => {
+            setUploadSourceOpen(false)
+            tarInputRef.current?.click()
+          }}
+          onClose={() => setUploadSourceOpen(false)}
+        />
       )}
 
       {sourceModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setSourceModalOpen(false)}
-        >
-          <div
-            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold text-slate-800">Sources</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Where the images came from. Click a shop to mint its next
-              version — deleting a source only untags its batches.
-            </p>
-            <div className="mt-4 flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-              <input
-                type="text"
-                value={newSourceName}
-                onChange={(e) => setNewSourceName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') createSource(newSourceName)
-                }}
-                placeholder="New source name (e.g. Shop A)"
-                className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => createSource(newSourceName)}
-                disabled={!newSourceName.trim()}
-                className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-600 disabled:opacity-40"
-              >
-                Add source
-              </button>
-            </div>
-            <div className="mt-4 space-y-2">
-              {sourcesByName.length === 0 ? (
-                <p className="py-6 text-center text-sm text-slate-400">
-                  No sources yet
-                </p>
-              ) : (
-                sourcesByName.map(([name, versions]) => (
-                  <div
-                    key={name}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-slate-700">
-                        {name}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => createSource(name)}
-                        className="rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100"
-                        title={`Create ${name} · v${
-                          Math.max(
-                            0,
-                            ...versions.map((v) =>
-                              /^\d+$/.test(v.version)
-                                ? parseInt(v.version, 10)
-                                : 0,
-                            ),
-                          ) + 1
-                        }`}
-                      >
-                        + version
-                      </button>
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {versions.map((s) => (
-                        <span
-                          key={s.id}
-                          className="flex items-center gap-1.5 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-medium text-indigo-700"
-                          title={`${s.batches} batch${
-                            s.batches === 1 ? '' : 'es'
-                          }`}
-                        >
-                          v{s.version}
-                          <span className="text-indigo-400">
-                            {s.batches} batch{s.batches === 1 ? '' : 'es'}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => deleteSource(s.id)}
-                            className="ml-0.5 text-indigo-400 transition hover:text-red-500"
-                            title="Delete (untags batches)"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => setSourceModalOpen(false)}
-              className="mt-5 w-full rounded-lg border border-slate-300 py-2 text-sm text-slate-600 transition hover:bg-slate-100"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+        <SourceModal
+          sources={sources}
+          onCreateSource={createSource}
+          onDeleteSource={deleteSource}
+          onClose={() => setSourceModalOpen(false)}
+        />
       )}
 
       {archivesOpen && (
@@ -6226,88 +5487,14 @@ function App() {
       )}
 
       {importArchiveOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-          onClick={() => setImportArchiveOpen(false)}
-        >
-          <div
-            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/60 bg-white/90 p-6 shadow-xl backdrop-blur-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold text-slate-800">
-              Import dataset
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Upload an archive file, or restore one already stored on the
-              server.
-            </p>
-            <input
-              ref={importFileRef}
-              type="file"
-              accept=".tar,.tar.gz,.tgz,.tar.bz2,.tar.xz,.zip,.rar"
-              className="hidden"
-              onChange={handleImportArchiveFile}
-            />
-            <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
-              <span className="text-sm text-slate-700">
-                Archive file (.tar, .tar.gz, .zip, .rar)
-              </span>
-              <button
-                type="button"
-                onClick={() => importFileRef.current?.click()}
-                disabled={uploadingArchive || restoringArchiveId !== null}
-                className="rounded-lg bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-600 disabled:opacity-40"
-              >
-                {uploadingArchive ? 'Uploading...' : 'Choose file'}
-              </button>
-            </div>
-            <div className="mt-4 space-y-2">
-              {archives.length === 0 ? (
-                <p className="py-6 text-center text-sm text-slate-400">
-                  No archives stored yet
-                </p>
-              ) : (
-                archives.map((a) => (
-                  <div
-                    key={a.id}
-                    className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate font-medium text-slate-700">
-                        {a.name}
-                      </div>
-                      <div className="text-xs text-slate-400">
-                        {a.dataset ?? 'unknown dataset'} ·{' '}
-                        {(a.size / 1024 / 1024).toFixed(1)} MB ·{' '}
-                        {a.counts?.images ?? 0} images
-                        {a.created_at &&
-                          ` · ${formatRelativeTime(a.created_at)}`}
-                        {!a.exists && ' · file missing'}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => doRestoreArchive(a.id)}
-                      disabled={!a.exists || restoringArchiveId !== null}
-                      className="ml-auto shrink-0 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-600 disabled:opacity-40"
-                    >
-                      {restoringArchiveId === a.id ? 'Restoring...' : 'Restore'}
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="mt-6 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setImportArchiveOpen(false)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <ImportArchiveModal
+          archives={archives}
+          uploading={uploadingArchive}
+          restoringId={restoringArchiveId}
+          onUploadFile={handleImportArchiveFile}
+          onRestore={doRestoreArchive}
+          onClose={() => setImportArchiveOpen(false)}
+        />
       )}
 
       {confirmingDeleteArchive && (

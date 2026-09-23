@@ -1,5 +1,5 @@
 import Modal from './Modal'
-import { formatRelativeTime } from '../utils'
+import ArchiveList from './ArchiveList'
 
 export default function ArchivesModal({
   dataset,
@@ -43,45 +43,28 @@ export default function ArchivesModal({
           </button>
         </div>
       </div>
-      <div className="mt-4 space-y-2">
-        {datasetArchives.length === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-400">
-            No archives for this dataset yet
-          </p>
-        ) : (
-          datasetArchives.map((a) => (
-            <div
-              key={a.id}
-              className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-            >
-              <div className="min-w-0">
-                <div className="truncate font-medium text-slate-700">
-                  {a.name}
-                </div>
-                <div className="text-xs text-slate-400">
-                  {(a.size / 1024 / 1024).toFixed(1)} MB
-                  {a.created_at && ` · ${formatRelativeTime(a.created_at)}`}
-                  {!a.exists && ' · file missing'}
-                </div>
-              </div>
-              <div className="ml-auto flex shrink-0 items-center gap-1">
-                <a
-                  href={`/api/archives/${a.id}/download`}
-                  className="rounded-md px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
-                >
-                  Download
-                </a>
-                <button
-                  type="button"
-                  onClick={() => onDeleteArchive(a)}
-                  className="rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))
-        )}
+      <div className="mt-4">
+        <ArchiveList
+          archives={datasetArchives}
+          emptyText="No archives for this dataset yet"
+          renderActions={(a) => (
+            <>
+              <a
+                href={`/api/archives/${a.id}/download`}
+                className="rounded-md px-2 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-50"
+              >
+                Download
+              </a>
+              <button
+                type="button"
+                onClick={() => onDeleteArchive(a)}
+                className="rounded-md px-2 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50"
+              >
+                Delete
+              </button>
+            </>
+          )}
+        />
       </div>
       <div className="mt-6 flex justify-end">
         <button
