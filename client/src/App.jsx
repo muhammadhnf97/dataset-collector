@@ -12,6 +12,8 @@ import DatasetSettingsModal from './components/DatasetSettingsModal'
 import UploadSourceModal from './components/UploadSourceModal'
 import SourceModal from './components/SourceModal'
 import ImportArchiveModal from './components/ImportArchiveModal'
+import SkeletonImg from './components/SkeletonImg'
+import SkeletonGrid from './components/SkeletonGrid'
 import { formatRelativeTime } from './utils'
 
 function UploadIcon({ className }) {
@@ -528,7 +530,7 @@ function DatasetImageThumb({
             : ''
       }`}
     >
-      <img
+      <SkeletonImg
         src={`/api${src}`}
         alt=""
         loading="lazy"
@@ -631,7 +633,7 @@ function DatasetBatchSection({
   portrait,
   lastEdited,
 }) {
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [loadedCount, setLoadedCount] = useState(0)
   const batchName = stem.replace(/^raw-images_/, '')
   const total = stats?.total ?? 0
@@ -678,7 +680,11 @@ function DatasetBatchSection({
         </span>
       </h3>
       {loadedCount === 0 && loading ? (
-        <p className="text-xs text-slate-400">Loading images...</p>
+        <SkeletonGrid
+          count={portrait ? 16 : 12}
+          cols={portrait ? 'grid-cols-8' : 'grid-cols-6'}
+          aspect={portrait ? 'aspect-[9/16]' : 'aspect-video'}
+        />
       ) : (
         <div className={`grid gap-3 ${portrait ? 'grid-cols-8' : 'grid-cols-6'}`}>
           {images.map((src) => (
@@ -696,6 +702,15 @@ function DatasetBatchSection({
               onToggle={onToggleSelect}
             />
           ))}
+          {loading &&
+            Array.from({
+              length: Math.min(DATASET_PAGE_LIMIT, total - loadedCount),
+            }).map((_, i) => (
+              <div
+                key={`sk-${i}`}
+                className={`animate-pulse rounded-lg bg-slate-200 ${portrait ? 'aspect-[9/16]' : 'aspect-video'}`}
+              />
+            ))}
         </div>
       )}
       {hasMore && (
@@ -955,6 +970,7 @@ function App() {
   const [selectedRaw, setSelectedRaw] = useState(null)
   const [selectedBatchId, setSelectedBatchId] = useState(null)
   const [selectedRawImages, setSelectedRawImages] = useState([])
+  const [rawImagesLoading, setRawImagesLoading] = useState(false)
   const [yoloClasses, setYoloClasses] = useState([])
   const [batches, setBatches] = useState([])
   const [selectedBatch, setSelectedBatch] = useState(null)
@@ -1370,6 +1386,7 @@ function App() {
   }
 
   const fetchRawImages = async (batchId, page = imagePage) => {
+    setRawImagesLoading(true)
     try {
       const response = await fetch(
         `/api/images?id=${encodeURIComponent(batchId)}&page=${page}&limit=${IMAGES_PER_PAGE}`,
@@ -1379,6 +1396,8 @@ function App() {
       setRawImagesTotal(data.total ?? data.images?.length ?? 0)
     } catch {
       setStatus('Failed: could not reach the server')
+    } finally {
+      setRawImagesLoading(false)
     }
   }
 
@@ -3651,6 +3670,8 @@ function App() {
                   } else {
                     setSelectedRaw(source)
                     setSelectedBatchId(id)
+                    setSelectedRawImages([])
+                    setRawImagesLoading(id !== null && id !== undefined)
                     setImagePage(0)
                   }
                 }}
@@ -3848,6 +3869,11 @@ function App() {
                 </div>
               </div>
 
+              {rawImagesLoading && activeImages.length === 0 ? (
+                <div className="mt-4">
+                  <SkeletonGrid count={12} />
+                </div>
+              ) : (
               <div className="mt-4 grid grid-cols-6 gap-3 rounded-2xl border border-white/60 bg-white/70 p-3 shadow-sm backdrop-blur-sm">
                 {pageImages.map((image, index) => (
                   <button
@@ -3858,7 +3884,7 @@ function App() {
                     }
                     className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
                   >
-                    <img
+                    <SkeletonImg
                       src={`/api${image.path ?? image}`}
                       alt=""
                       className="aspect-video w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105"
@@ -3866,7 +3892,8 @@ function App() {
                   </button>
                 ))}
               </div>
-          {activeImages.length === 0 && (
+              )}
+          {activeImages.length === 0 && !rawImagesLoading && (
             <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
               No images yet
             </div>
@@ -3938,8 +3965,6 @@ function App() {
                           onClick={() => {
                             setNewDatasetMenuOpen(false)
                             setCreateDatasetOpen(true)
-                            setCreateDatasetName('')
-                            setCreateDatasetTemplate('')
                           }}
                           className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
                         >
@@ -4036,10 +4061,10 @@ function App() {
                   }`}
                 >
                   {d.previews && d.previews.length > 0 ? (
-                    <img
+                    <SkeletonImg
                       src={`/api${d.previews[0]}`}
                       alt=""
-                      className="absolute inset-0 h-full w-full object-cover"
+                      className="absolute inset-0 h-full w-full bg-slate-200 object-cover"
                     />
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-xs text-slate-400">
