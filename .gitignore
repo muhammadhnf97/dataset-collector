@@ -53,5 +53,10 @@ server/datasets/
 logs/
 *.log
 
+# Pre-label model files (runtime artifacts, not versioned)
+server/template/**/model/
+*.pdmodel
+*.pdiparams*
+
 # SQLite database (runtime state)
 server/data.db*

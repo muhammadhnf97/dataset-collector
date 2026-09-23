@@ -1064,6 +1064,7 @@ function App() {
   const [prelabelConfirmCount, setPrelabelConfirmCount] = useState(0)
   const [prelabelWriteValues, setPrelabelWriteValues] = useState(true)
   const [prelabelMenuOpen, setPrelabelMenuOpen] = useState(false)
+  const [prelabelModel, setPrelabelModel] = useState('')
   const prelabelMenuRef = useRef(null)
   const [attrMenuOpen, setAttrMenuOpen] = useState(false)
   const attrMenuRef = useRef(null)
@@ -1538,6 +1539,7 @@ function App() {
         } else {
           setDatasetAttributes([])
         }
+        setPrelabelModel('')
       } else {
         setStatus(`Failed: ${data.detail ?? imagesData.detail ?? 'Unknown error'}`)
       }
@@ -2760,6 +2762,7 @@ function App() {
             batch: datasetBatchFilter || '',
             write_values: writeValues,
             user: currentUser,
+            model: prelabelModel,
           }),
         },
       )
@@ -4122,6 +4125,10 @@ function App() {
               currentDataset?.framework && currentDataset?.model
                 ? `${currentDataset.framework}/${currentDataset.model}`.toLowerCase()
                 : ''
+            const activeTemplate = templates.find((t) => t.name === templatePath)
+            const templateModels = activeTemplate?.models ?? []
+            const effectiveModel =
+              prelabelModel || activeTemplate?.default_model || ''
             return (
             <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
               <div className="flex items-center gap-3 px-6 py-4">
@@ -4353,6 +4360,24 @@ function App() {
                       </div>
                       {prelabelMenuOpen && (
                         <div className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                          {templateModels.length > 0 && (
+                            <div className="border-b border-slate-100 px-4 py-2">
+                              <label className="block text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                                Model
+                              </label>
+                              <select
+                                value={effectiveModel}
+                                onChange={(e) => setPrelabelModel(e.target.value)}
+                                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700 outline-none"
+                              >
+                                {templateModels.map((m) => (
+                                  <option key={m} value={m}>
+                                    {m.replace(/^model\//, '').replace(/\.tar$/, '')}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
                           <button
                             type="button"
                             onClick={() => {

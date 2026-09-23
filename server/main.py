@@ -837,6 +837,18 @@ def load_template_config(template_name: str):
     return yaml.safe_load(config_path.read_text()) or {}
 
 
+def _list_template_models(template_name: str):
+    """Relative paths (under the template dir) of usable pre-label models."""
+    model_root = TEMPLATES_DIR / template_name / "model"
+    if not model_root.is_dir():
+        return []
+    return sorted(
+        f"model/{d.name}"
+        for d in model_root.iterdir()
+        if d.is_dir() and (d / "inference.pdmodel").exists()
+    )
+
+
 @app.get("/templates")
 def get_templates():
     templates = []
@@ -849,7 +861,19 @@ def get_templates():
             else name
         )
         label = config.get("model-name") or config.get("model-category") or name
-        templates.append({"name": name, "label": label, "framework": framework})
+        default_model = (config.get("pre-label-model") or "").strip()
+        models = _list_template_models(name)
+        if default_model and default_model not in models:
+            models.insert(0, default_model)
+        templates.append(
+            {
+                "name": name,
+                "label": label,
+                "framework": framework,
+                "models": models,
+                "default_model": default_model,
+            }
+        )
     return {"templates": templates}
 
 
@@ -1168,22 +1192,42 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
         raise HTTPException(status_code=400, detail="Dataset framework/model not set")
 
     config = load_template_config(_normalize_template_path(framework, model))
-    prelabel_file = (config.get("pre-label-model") or "").strip()
-    if not prelabel_file:
+    requested_model = (payload.get("model") or "").strip() or (
+        config.get("pre-label-model") or ""
+    ).strip()
+    if not requested_model:
         raise HTTPException(status_code=400, detail="No pre-label model configured")
 
     template_slug = _normalize_template_path(framework, model)
-    tar_path = (TEMPLATES_DIR / template_slug / prelabel_file).resolve()
-    if not tar_path.is_relative_to(TEMPLATES_DIR.resolve()) or not tar_path.exists():
+    model_path = (TEMPLATES_DIR / template_slug / requested_model).resolve()
+    if not model_path.is_relative_to(TEMPLATES_DIR.resolve()) or not model_path.exists():
         raise HTTPException(status_code=404, detail="Pre-label model file not found")
 
-    dataset_dir = DATASETS_DIR / dir_name
-    model_dir = dataset_dir / "pre-label-model"
-    if model_dir.exists():
-        shutil.rmtree(model_dir)
-    model_dir.mkdir(parents=True)
-    with tarfile.open(tar_path, "r") as tar:
-        tar.extractall(model_dir, filter="data")
+    if model_path.is_dir():
+        # A plain directory (inference.pdmodel + inference.pdiparams) is used
+        # directly — no extraction needed.
+        model_dir = model_path
+    else:
+        # Tar archive: extract once next to it (shared across datasets), and
+        # re-extract only when the tar is newer than the extracted copy.
+        tar_path = model_path
+        model_dir = tar_path.parent / Path(requested_model).name.split(".")[0]
+        if model_dir.is_dir() and model_dir.stat().st_mtime >= tar_path.stat().st_mtime:
+            pass
+        else:
+            tmp_dir = tar_path.parent / f".{model_dir.name}.tmp"
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir)
+            tmp_dir.mkdir()
+            try:
+                with tarfile.open(tar_path, "r") as tar:
+                    tar.extractall(tmp_dir, filter="data")
+            except Exception:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                raise
+            if model_dir.exists():
+                shutil.rmtree(model_dir)
+            tmp_dir.rename(model_dir)
 
     selected_batch = (payload.get("batch") or "").strip()
     target_batch_id = None

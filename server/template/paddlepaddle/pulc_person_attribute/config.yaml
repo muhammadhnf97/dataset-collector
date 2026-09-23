@@ -1,6 +1,6 @@
 framework-name: "PaddlePaddle"
 model-name: "PULC_person_attribute"
-pre-label-model: "person_attribute_infer.tar"
+pre-label-model: "model/pa100k_scholl2_person_attribute_infer"
 model-annotation: "text"
 attributes:
   - name: Hat
