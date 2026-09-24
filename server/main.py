@@ -245,6 +245,7 @@ def save_datasets(data: dict):
             if name not in seen:
                 db.query(DbDatasetImage).filter_by(dataset_id=ds.id).delete()
                 db.query(DbAnnotation).filter_by(dataset_id=ds.id).delete()
+                db.query(DbActivityLog).filter_by(dataset_id=ds.id).delete()
                 db.delete(ds)
         db.commit()
     finally:
@@ -551,6 +552,8 @@ def generate_raw_images(source: str, payload: dict):
             parent_source_id = source_batch.source_id if source_batch else None
             if remove_source and source_batch:
                 for img in list(source_batch.images):
+                    db.query(DbDatasetImage).filter_by(image_id=img.id).delete()
+                    db.query(DbAnnotation).filter_by(image_id=img.id).delete()
                     db.delete(img)
                 db.delete(source_batch)
 
@@ -620,6 +623,8 @@ def generate_raw_images(source: str, payload: dict):
         parent_source_id = source_batch.source_id if source_batch else None
         if remove_source and source_batch:
             for img in list(source_batch.images):
+                db.query(DbDatasetImage).filter_by(image_id=img.id).delete()
+                db.query(DbAnnotation).filter_by(image_id=img.id).delete()
                 db.delete(img)
             db.delete(source_batch)
 
@@ -2648,6 +2653,8 @@ def _restore_archive_staging(staging: Path):
                     )
                     db.add(db_image)
                     db.flush()
+                if not db_batch.cover:
+                    db_batch.cover = db_image.path
 
                 if db_image.id not in linked:
                     db.add(
@@ -3456,6 +3463,8 @@ def delete_images(payload: dict):
                 target.unlink()
             deleted.append(path)
             batch = img.batch
+            db.query(DbDatasetImage).filter_by(image_id=img.id).delete()
+            db.query(DbAnnotation).filter_by(image_id=img.id).delete()
             db.delete(img)
             db.flush()
             remaining = (
