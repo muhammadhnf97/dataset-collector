@@ -16,6 +16,25 @@ import SkeletonImg from './components/SkeletonImg'
 import SkeletonGrid from './components/SkeletonGrid'
 import { formatRelativeTime } from './utils'
 
+// Literal class strings required — Tailwind can't see dynamically built names.
+const GRID_COLS = {
+  3: 'grid-cols-3',
+  4: 'grid-cols-4',
+  6: 'grid-cols-6',
+  8: 'grid-cols-8',
+  9: 'grid-cols-9',
+  12: 'grid-cols-12',
+}
+const MASONRY_COLS = {
+  3: 'columns-3',
+  4: 'columns-4',
+  6: 'columns-6',
+  8: 'columns-8',
+  9: 'columns-9',
+  12: 'columns-12',
+}
+const GRID_COL_OPTIONS = Object.keys(GRID_COLS).map(Number)
+
 function UploadIcon({ className }) {
   return (
     <svg
@@ -114,7 +133,8 @@ function Filmstrip({ images, index, marked, onSelect }) {
   )
 }
 
-function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, attributes, annotations, reviewed }) {
+function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, onAnnotate, attributes, annotations, reviewed }) {
+  const [pendingAttr, setPendingAttr] = useState(null)
   useEffect(() => {
     const handleKey = (e) => {
       if (e.key === 'Escape') onClose()
@@ -142,18 +162,35 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, at
       >
         <Filmstrip images={images} index={index} onSelect={onSelect} />
 
-      {onRemove && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            const current = images[index]
-            onRemove(current.path ?? current)
-          }}
-          className="absolute left-4 top-24 z-10 flex h-10 items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-red-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-red-500"
-        >
-          Remove
-        </button>
+      {(onRemove || onAnnotate) && (
+        <div className="absolute left-4 top-24 z-10 flex items-center gap-2">
+          {onAnnotate && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                const current = images[index]
+                onAnnotate(current.path ?? current)
+              }}
+              className="flex h-10 items-center justify-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-emerald-500"
+            >
+              Annotate
+            </button>
+          )}
+          {onRemove && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                const current = images[index]
+                onRemove(current.path ?? current)
+              }}
+              className="flex h-10 items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-red-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-red-500"
+            >
+              Remove
+            </button>
+          )}
+        </div>
       )}
 
       <button
@@ -199,7 +236,7 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, at
       </span>
 
       {attributes && (
-        <div className="absolute bottom-5 left-4 z-10 max-h-56 w-64 overflow-y-auto rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs shadow backdrop-blur-md">
+        <div className="absolute bottom-5 left-4 z-10 w-64 rounded-xl border border-slate-300 bg-white/90 px-3 py-2 text-xs shadow backdrop-blur-md">
           {(() => {
             const current = images[index].path ?? images[index]
             const values = annotations?.[current]
@@ -238,7 +275,19 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, at
               return (
                 <div
                   key={group.name}
-                  className="flex items-center gap-1.5 py-0.5 leading-relaxed"
+                  onClick={
+                    onAnnotate ? () => setPendingAttr(gi) : undefined
+                  }
+                  className={`flex items-center gap-1.5 py-0.5 leading-relaxed ${
+                    onAnnotate
+                      ? '-mx-1 cursor-pointer rounded px-1 transition hover:bg-slate-200/70'
+                      : ''
+                  }`}
+                  title={
+                    onAnnotate
+                      ? `Annotate ${group.alias ?? group.name} from here`
+                      : undefined
+                  }
                 >
                   <span
                     className={`inline-block h-2 w-2 shrink-0 rounded-full ${
@@ -272,6 +321,23 @@ function ImageModal({ images, index, onClose, onNavigate, onSelect, onRemove, at
         </div>
       )}
     </div>
+      {pendingAttr !== null && (
+        <div onClick={(e) => e.stopPropagation()}>
+          <ConfirmModal
+            title={`Annotate ${attributes[pendingAttr].alias ?? attributes[pendingAttr].name}?`}
+            message="Open annotation for this attribute starting from the current image."
+            confirmLabel="Annotate"
+            danger={false}
+            onCancel={() => setPendingAttr(null)}
+            onConfirm={() => {
+              const gi = pendingAttr
+              setPendingAttr(null)
+              const current = images[index]
+              onAnnotate?.(current.path ?? current, gi)
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -393,7 +459,7 @@ function RemoveModeModal({
   )
 }
 
-function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel = 'Delete' }) {
+function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel = 'Delete', danger = true }) {
   const confirmRef = useRef(null)
   const onConfirmRef = useRef(onConfirm)
   const onCancelRef = useRef(onCancel)
@@ -420,7 +486,11 @@ function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-80 rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-500/15 text-red-400">
+        <div
+          className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ${
+            danger ? 'bg-red-500/15 text-red-400' : 'bg-emerald-500/15 text-emerald-400'
+          }`}
+        >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
@@ -429,11 +499,19 @@ function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel
             stroke="currentColor"
             className="h-6 w-6"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
-            />
+            {danger ? (
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"
+              />
+            ) : (
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"
+              />
+            )}
           </svg>
         </div>
         <h3 className="mt-4 text-center text-base font-semibold text-white">
@@ -455,7 +533,11 @@ function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel
             ref={confirmRef}
             type="button"
             onClick={onConfirm}
-            className="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-red-500/30 transition hover:bg-red-600"
+            className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-lg transition ${
+              danger
+                ? 'bg-red-500 shadow-red-500/30 hover:bg-red-600'
+                : 'bg-emerald-500 shadow-emerald-500/30 hover:bg-emerald-600'
+            }`}
           >
             {confirmLabel}
           </button>
@@ -503,13 +585,13 @@ const sortedReviewers = (merged) =>
 
 const DatasetImageThumb = memo(function DatasetImageThumb({
   src,
-  isAnnotated,
+  attributes,
   annotatedAgo,
   reviewedBy,
   isLastEdited,
   selectable,
   isSelected,
-  portrait,
+  mode,
   onOpen,
   onToggle,
 }) {
@@ -523,16 +605,25 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
         ago: formatRelativeTime(at),
       }))
     : []
+  const groups = attributes ?? []
+  const rev = reviewedBy ?? {}
+  // a group counts as reviewed if it has its own entry or an "all" (whole-image) one
+  const reviewedCount = groups.reduce(
+    (n, _g, gi) =>
+      n +
+      ((rev[String(gi)] && Object.keys(rev[String(gi)]).length > 0) ||
+      (rev.all && Object.keys(rev.all).length > 0)
+        ? 1
+        : 0),
+    0,
+  )
+  const allReviewed = groups.length > 0 && reviewedCount === groups.length
   return (
     <button
       type="button"
       onClick={() => (selectable ? onToggle(src) : onOpen(src))}
-      className={`group relative block overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
-        isSelected
-          ? 'ring-2 ring-red-500'
-          : isAnnotated
-            ? 'ring-2 ring-emerald-500'
-            : ''
+      className={`group relative block overflow-hidden rounded shadow transition hover:shadow-lg ${
+        mode === 'natural' ? 'mb-3 w-full break-inside-avoid' : ''
       }`}
     >
       <SkeletonImg
@@ -540,11 +631,15 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
         alt=""
         loading="lazy"
         decoding="async"
-        className={`w-full object-cover ${portrait ? 'aspect-[9/16]' : 'aspect-video'}`}
+        className={`w-full ${
+          mode === 'natural'
+            ? 'h-auto'
+            : `object-cover ${mode === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}`
+        }`}
       />
       {selectable && (
         <span
-          className={`absolute left-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold shadow ${
+          className={`absolute left-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold shadow ${
             isSelected
               ? 'bg-red-500 text-white'
               : 'bg-white/50 text-transparent'
@@ -579,10 +674,14 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
           </svg>
         </span>
       )}
-      {isAnnotated && (
-        <span className="absolute right-1 top-1 flex items-center gap-1 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white shadow">
-          ✓ Annotated
-          {annotatedAgo && (
+      {reviewedCount > 0 && (
+        <span
+          className={`absolute right-1 top-1 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow ${
+            allReviewed ? 'bg-emerald-500 text-white' : 'bg-yellow-400 text-slate-800'
+          }`}
+        >
+          {reviewedCount}/{groups.length}
+          {annotatedAgo && !selectable && (
             <span className="font-normal opacity-90">· {annotatedAgo}</span>
           )}
         </span>
@@ -590,7 +689,7 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
       {reviewers.length > 0 && (
         <span
           title={reviewers.map((r) => `${r.user}${r.ago ? ` · ${r.ago}` : ''}`).join('\n')}
-          className={`absolute right-1 ${isAnnotated ? 'top-7' : 'top-1'} flex max-w-[85%] items-center gap-1 truncate rounded-full bg-sky-500/90 px-2 py-0.5 text-[10px] font-bold text-white shadow`}
+          className={`absolute right-1 ${reviewedCount > 0 ? 'top-7' : 'top-1'} flex max-w-[85%] items-center gap-1 truncate rounded-full bg-sky-500/90 px-2 py-0.5 text-[10px] font-bold text-white shadow`}
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -635,7 +734,9 @@ function DatasetBatchSection({
   removeMode,
   selected,
   onToggleSelect,
-  portrait,
+  mode,
+  cols,
+  attributes,
   lastEdited,
 }) {
   const [loading, setLoading] = useState(true)
@@ -686,23 +787,29 @@ function DatasetBatchSection({
       </h3>
       {loadedCount === 0 && loading ? (
         <SkeletonGrid
-          count={portrait ? 16 : 12}
-          cols={portrait ? 'grid-cols-8' : 'grid-cols-6'}
-          aspect={portrait ? 'aspect-[9/16]' : 'aspect-video'}
+          count={cols * 2}
+          cols={GRID_COLS[cols]}
+          aspect={mode === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}
         />
       ) : (
-        <div className={`grid gap-3 ${portrait ? 'grid-cols-8' : 'grid-cols-6'}`}>
+        <div
+          className={
+            mode === 'natural'
+              ? `${MASONRY_COLS[cols]} gap-3`
+              : `grid gap-3 ${GRID_COLS[cols]}`
+          }
+        >
           {images.map((src) => (
             <DatasetImageThumb
               key={src}
               src={src}
-              isAnnotated={annotations[src] !== undefined}
+              attributes={attributes}
               annotatedAgo={formatRelativeTime(annotationTimes[src])}
               reviewedBy={reviewed?.[src]}
               isLastEdited={src === lastEdited}
               selectable={removeMode}
               isSelected={selected?.has(src)}
-              portrait={portrait}
+              mode={mode}
               onOpen={onOpenImage}
               onToggle={onToggleSelect}
             />
@@ -713,7 +820,13 @@ function DatasetBatchSection({
             }).map((_, i) => (
               <div
                 key={`sk-${i}`}
-                className={`animate-pulse rounded-lg bg-slate-200 ${portrait ? 'aspect-[9/16]' : 'aspect-video'}`}
+                className={`animate-pulse rounded bg-slate-200 ${
+                  mode === 'natural'
+                    ? 'mb-3 aspect-video break-inside-avoid'
+                    : mode === 'portrait'
+                      ? 'aspect-[9/16]'
+                      : 'aspect-video'
+                }`}
               />
             ))}
         </div>
@@ -747,12 +860,18 @@ function DatasetSimilarView({
   onKeepRestAll,
   threshold,
   onThresholdChange,
-  portrait,
+  mode,
+  cols,
+  attributes,
   lastEdited,
 }) {
   const [expanded, setExpanded] = useState(new Set())
-  const aspectCls = portrait ? 'aspect-[9/16]' : 'aspect-video'
-  const gridCls = `grid gap-3 ${portrait ? 'grid-cols-8' : 'grid-cols-6'}`
+  const isNatural = mode === 'natural'
+  // cluster covers need a fixed box for the stacked-deck effect
+  const aspectCls = mode === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'
+  const gridCls = isNatural
+    ? `${MASONRY_COLS[cols]} gap-3`
+    : `grid gap-3 ${GRID_COLS[cols]}`
 
   const toggleExpand = (key) => {
     setExpanded((prev) => {
@@ -770,13 +889,13 @@ function DatasetSimilarView({
     <DatasetImageThumb
       key={src}
       src={src}
-      isAnnotated={annotations[src] !== undefined}
+      attributes={attributes}
       annotatedAgo={formatRelativeTime(annotationTimes[src])}
       reviewedBy={reviewed?.[src]}
       isLastEdited={src === lastEdited}
       selectable
       isSelected={selected?.has(src)}
-      portrait={portrait}
+      mode={mode}
       onOpen={onOpenImage}
       onToggle={onToggleSelect}
     />
@@ -851,11 +970,14 @@ function DatasetSimilarView({
             (n, p) => n + (selected?.has(p) ? 1 : 0),
             0,
           )
+
           if (isOpen) {
             return (
               <div
                 key={cover}
-                className="col-span-full rounded-xl border border-violet-200 bg-violet-50/40 p-3"
+                className={`rounded-xl border border-violet-200 bg-violet-50/40 p-3 ${
+                  isNatural ? 'mb-3 [column-span:all]' : 'col-span-full'
+                }`}
               >
                 <div className="mb-2 flex items-center gap-2">
                   <button
@@ -886,7 +1008,10 @@ function DatasetSimilarView({
             )
           }
           return (
-            <div key={cover} className="relative">
+            <div
+              key={cover}
+              className={`relative ${isNatural ? 'mb-3 break-inside-avoid' : ''}`}
+            >
               {cluster.length > 1 && (
                 <>
                   <img
@@ -894,29 +1019,21 @@ function DatasetSimilarView({
                     alt=""
                     loading="lazy"
                     decoding="async"
-                    className={`absolute inset-0 w-full rotate-2 rounded-lg object-cover shadow ${aspectCls}`}
+                    className={`absolute inset-0 w-full rotate-2 rounded object-cover shadow ${aspectCls}`}
                   />
                   <img
                     src={`/api${cluster[2] ?? cluster[1]}`}
                     alt=""
                     loading="lazy"
                     decoding="async"
-                    className={`absolute inset-0 w-full -rotate-2 rounded-lg object-cover shadow ${aspectCls}`}
+                    className={`absolute inset-0 w-full -rotate-2 rounded object-cover shadow ${aspectCls}`}
                   />
                 </>
               )}
               <button
                 type="button"
                 onClick={() => toggleExpand(cover)}
-                className={`group relative block w-full overflow-hidden rounded-lg shadow transition hover:shadow-lg ${
-                  selCount === cluster.length
-                    ? 'ring-2 ring-red-500'
-                    : selCount > 0
-                      ? 'ring-2 ring-red-300'
-                      : annotations[cover] !== undefined
-                        ? 'ring-2 ring-emerald-500'
-                        : ''
-                }`}
+                className="group relative block w-full overflow-hidden rounded shadow transition hover:shadow-lg"
               >
                 <img
                   src={`/api${cover}`}
@@ -1019,7 +1136,13 @@ function App() {
   const [confirmingRemoveDatasetBatch, setConfirmingRemoveDatasetBatch] = useState(false)
   const [datasetBatchToRemove, setDatasetBatchToRemove] = useState('')
   const [datasetRemoveMode, setDatasetRemoveMode] = useState(false)
-  const [datasetGridPortrait, setDatasetGridPortrait] = useState(false)
+  const [datasetGridMode, setDatasetGridMode] = useState('landscape')
+  // per-mode column counts so each layout keeps its own density
+  const [datasetGridCols, setDatasetGridCols] = useState({
+    landscape: 6,
+    portrait: 8,
+    natural: 6,
+  })
   const [similarView, setSimilarView] = useState(null)
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarThreshold, setSimilarThreshold] = useState(6)
@@ -1655,7 +1778,7 @@ function App() {
     }
   }
 
-  const openAttrAnnotate = (name, templateName, batchFilter = null, startImage = null, startAttr = null) => {
+  const openAttrAnnotate = (name, templateName, batchFilter = null, startImage = null, startAttr = null, returnToViewer = false) => {
     if (!templateName) {
       setStatus('Set a model for this dataset before annotating')
       return
@@ -1667,14 +1790,14 @@ function App() {
         batch: batchFilter,
         handlers: all,
         proceed: () =>
-          launchAttrAnnotate(name, templateName, batchFilter, startImage, startAttr),
+          launchAttrAnnotate(name, templateName, batchFilter, startImage, startAttr, returnToViewer),
       })
       return
     }
-    launchAttrAnnotate(name, templateName, batchFilter, startImage, startAttr)
+    launchAttrAnnotate(name, templateName, batchFilter, startImage, startAttr, returnToViewer)
   }
 
-  const launchAttrAnnotate = async (name, templateName, batchFilter = null, startImage = null, startAttr = null) => {
+  const launchAttrAnnotate = async (name, templateName, batchFilter = null, startImage = null, startAttr = null, returnToViewer = false) => {
     try {
       const imagesUrl = batchFilter
         ? `/api/datasets/${encodeURIComponent(name)}/images?batch=${encodeURIComponent(batchFilter.replace(/^raw-images_/, ''))}&limit=0`
@@ -1708,6 +1831,7 @@ function App() {
         annotations,
         attrIndex: typeof startAttr === 'number' && startAttr >= 0 && startAttr < attributes.length ? startAttr : 0,
         imgIndex: Math.max(0, filteredImages.indexOf(startImage)),
+        returnToViewer,
       })
     } catch {
       setStatus('Failed: could not reach the server')
@@ -1838,6 +1962,19 @@ function App() {
       done: false,
       doneReviewed: null,
     }))
+  }
+
+  // Close the correction modal; when it was launched from the full image
+  // view, return there at the image currently shown instead.
+  const closeAttrAnnotate = () => {
+    if (attrAnnotate?.returnToViewer) {
+      const img = attrAnnotate.images[attrAnnotate.imgIndex]
+      setAttrAnnotate(null)
+      const i = datasetActiveImages.indexOf(img)
+      setDatasetModalIndex(i >= 0 ? i : 0)
+    } else {
+      setAttrAnnotate(null)
+    }
   }
 
   // "Done" on the last image: record that final image's check, fetch
@@ -3055,7 +3192,7 @@ function App() {
       const group = attrAnnotate.attributes[attrAnnotate.attrIndex]
       if (!group) return
       if (e.key === 'Escape') {
-        setAttrAnnotate(null)
+        closeAttrAnnotate()
       }
       if (attrAnnotate.done) {
         if (e.key === 'ArrowLeft') {
@@ -3121,7 +3258,7 @@ function App() {
     }
     attrShownRef.current = shown
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attrAnnotate?.imgIndex, attrAnnotate?.attrIndex, attrAnnotate === null])
+  }, [attrAnnotate?.images?.[attrAnnotate?.imgIndex], attrAnnotate?.attrIndex, attrAnnotate === null])
 
   useEffect(() => {
     if (!attrAnnotate) return
@@ -4314,20 +4451,52 @@ function App() {
                   })()}
                   <button
                     type="button"
-                    onClick={() => setDatasetGridPortrait((v) => !v)}
-                    title={datasetGridPortrait ? 'Switch to landscape grid' : 'Switch to portrait grid'}
+                    onClick={() =>
+                      setDatasetGridMode((m) =>
+                        m === 'landscape'
+                          ? 'portrait'
+                          : m === 'portrait'
+                            ? 'natural'
+                            : 'landscape',
+                      )
+                    }
+                    title={`Grid: ${datasetGridMode} — click to switch`}
                     className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100"
                   >
-                    {datasetGridPortrait ? (
+                    {datasetGridMode === 'landscape' ? (
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                         <rect x="3" y="7" width="18" height="10" rx="1.5" />
                       </svg>
-                    ) : (
+                    ) : datasetGridMode === 'portrait' ? (
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
                         <rect x="7" y="3" width="10" height="18" rx="1.5" />
                       </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <rect x="3" y="4" width="8" height="9" rx="1" />
+                        <rect x="13" y="4" width="8" height="5" rx="1" />
+                        <rect x="3" y="15" width="8" height="5" rx="1" />
+                        <rect x="13" y="11" width="8" height="9" rx="1" />
+                      </svg>
                     )}
                   </button>
+                  <select
+                    value={datasetGridCols[datasetGridMode]}
+                    onChange={(e) =>
+                      setDatasetGridCols((prev) => ({
+                        ...prev,
+                        [datasetGridMode]: Number(e.target.value),
+                      }))
+                    }
+                    title="Columns"
+                    className="h-8 rounded-full border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 outline-none transition hover:bg-slate-100"
+                  >
+                    {GRID_COL_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n} col
+                      </option>
+                    ))}
+                  </select>
                   <div className="ml-auto flex items-center gap-2">
                     <div ref={prelabelMenuRef} className="relative">
                       <div className="flex overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
@@ -4562,7 +4731,9 @@ function App() {
                     setSimilarThreshold(t)
                     fetchSimilar(t)
                   }}
-                  portrait={datasetGridPortrait}
+                  mode={datasetGridMode}
+                  cols={datasetGridCols[datasetGridMode]}
+                  attributes={datasetAttributes}
                   lastEdited={lastEditedImage}
                 />
               ) : visibleStems.length === 0 ? (
@@ -4587,7 +4758,9 @@ function App() {
                     removeMode={datasetRemoveMode}
                     selected={selectedDatasetImages}
                     onToggleSelect={toggleDatasetImageSelect}
-                    portrait={datasetGridPortrait}
+                    mode={datasetGridMode}
+                    cols={datasetGridCols[datasetGridMode]}
+                    attributes={datasetAttributes}
                     lastEdited={lastEditedImage}
                   />
                 ))
@@ -4687,6 +4860,23 @@ function App() {
         onClose={() => setDatasetModalIndex(null)}
         onNavigate={navigateDatasetModal}
         onSelect={setDatasetModalIndex}
+        onAnnotate={(image, attrIndex = null) => {
+          setDatasetModalIndex(null)
+          const ds = datasets.find((d) => d.name === activeDataset)
+          const tp =
+            ds?.framework && ds?.model
+              ? `${ds.framework}/${ds.model}`.toLowerCase()
+              : ''
+          const inFilter = datasetBatchFilter
+            ? (datasetImageGroups[datasetBatchFilter] ?? []).includes(image)
+            : true
+          const bf = inFilter
+            ? datasetBatchFilter
+            : (Object.keys(datasetImageGroups).find((k) =>
+                (datasetImageGroups[k] ?? []).includes(image),
+              ) ?? null)
+          requireUser(() => openAttrAnnotate(activeDataset, tp, bf, image, attrIndex, true))
+        }}
         attributes={datasetAttributes}
         annotations={datasetAnnotations}
         reviewed={datasetReviewed}
@@ -4697,6 +4887,17 @@ function App() {
           <div className="relative flex w-full max-w-5xl flex-1 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-2xl backdrop-blur-sm">
             <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100/80 px-4 py-3">
               <div className="flex items-center gap-3">
+                {attrAnnotate.returnToViewer && (
+                  <button
+                    type="button"
+                    title="Back to image view"
+                    onClick={closeAttrAnnotate}
+                    className="flex h-9 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-200"
+                  >
+                    <ArrowIcon direction="left" className="h-4 w-4" />
+                    Back
+                  </button>
+                )}
                 <span className="rounded-full bg-slate-200/80 px-3 py-1.5 text-sm font-medium text-slate-800">
                   {attrAnnotate.dataset}
                   {attrAnnotate.batchFilter && (
