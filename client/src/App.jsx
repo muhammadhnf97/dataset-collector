@@ -6,6 +6,8 @@ import ArchivesModal from './components/ArchivesModal'
 import AssignToDatasetModal from './components/AssignToDatasetModal'
 import BatchWarnModal from './components/BatchWarnModal'
 import ExportDatasetModal from './components/ExportDatasetModal'
+import ReviewSelectionModal from './components/ReviewSelectionModal'
+import ExportDatasetsModal from './components/ExportDatasetsModal'
 import CreateDatasetModal from './components/CreateDatasetModal'
 import ImportBatchModal from './components/ImportBatchModal'
 import DatasetSettingsModal from './components/DatasetSettingsModal'
@@ -1117,6 +1119,13 @@ function App() {
   const [rawGenerating, setRawGenerating] = useState(false)
   const [removeDatasetMode, setRemoveDatasetMode] = useState(false)
   const [selectedDatasetsToRemove, setSelectedDatasetsToRemove] = useState(new Set())
+  const [exportDatasetMode, setExportDatasetMode] = useState(false)
+  const [selectedDatasetsToExport, setSelectedDatasetsToExport] = useState(new Set())
+  const [exportDatasetsOpen, setExportDatasetsOpen] = useState(false)
+  const [multiExportName, setMultiExportName] = useState('')
+  const [multiExportSplit, setMultiExportSplit] = useState({ train: 70, val: 20, test: 10 })
+  const [multiExporting, setMultiExporting] = useState(false)
+  const [multiExportResult, setMultiExportResult] = useState(null)
   const [removeRawMode, setRemoveRawMode] = useState(false)
   const [selectedRawsToRemove, setSelectedRawsToRemove] = useState(new Set())
   const [confirmingRemoveRaws, setConfirmingRemoveRaws] = useState(false)
@@ -1135,7 +1144,7 @@ function App() {
   const [confirmingRemoveAttrImage, setConfirmingRemoveAttrImage] = useState(false)
   const [confirmingRemoveDatasetBatch, setConfirmingRemoveDatasetBatch] = useState(false)
   const [datasetBatchToRemove, setDatasetBatchToRemove] = useState('')
-  const [datasetRemoveMode, setDatasetRemoveMode] = useState(false)
+  const [datasetSelectMode, setDatasetSelectMode] = useState(false)
   const [datasetGridMode, setDatasetGridMode] = useState('landscape')
   // per-mode column counts so each layout keeps its own density
   const [datasetGridCols, setDatasetGridCols] = useState({
@@ -1148,6 +1157,8 @@ function App() {
   const [similarThreshold, setSimilarThreshold] = useState(6)
   const [selectedDatasetImages, setSelectedDatasetImages] = useState(new Set())
   const [confirmingRemoveDatasetImages, setConfirmingRemoveDatasetImages] = useState(false)
+  const [reviewSelectedOpen, setReviewSelectedOpen] = useState(false)
+  const [reviewSelectedImages, setReviewSelectedImages] = useState([])
   const [confirmingRemoveActiveDataset, setConfirmingRemoveActiveDataset] = useState(false)
   const [splitCount, setSplitCount] = useState(2)
   const [splitConfirmOpen, setSplitConfirmOpen] = useState(false)
@@ -2120,6 +2131,7 @@ function App() {
 
   const removeSelectedDatasetImages = async () => {
     setConfirmingRemoveDatasetImages(false)
+    setReviewSelectedOpen(false)
     const paths = [...selectedDatasetImages]
     if (!activeDataset || paths.length === 0) return
     try {
@@ -2207,7 +2219,7 @@ function App() {
         }
       })
       setSelectedDatasetImages(new Set())
-      setDatasetRemoveMode(false)
+      setDatasetSelectMode(false)
     } catch {
       setStatus('Failed: could not reach the server')
     }
@@ -2577,6 +2589,54 @@ function App() {
       setStatus('Failed: could not reach the server')
     } finally {
       setExporting(false)
+    }
+  }
+
+  const doExportDatasets = async () => {
+    const total =
+      Number(multiExportSplit.train) +
+      Number(multiExportSplit.val) +
+      Number(multiExportSplit.test)
+    if (total !== 100) {
+      setStatus(`Split must sum to 100 (currently ${total})`)
+      return
+    }
+    const names = [...selectedDatasetsToExport]
+    if (names.length < 2) {
+      setStatus('Select at least two datasets')
+      return
+    }
+    setMultiExporting(true)
+    setMultiExportResult(null)
+    setStatus(`Exporting ${names.length} datasets...`)
+    try {
+      const response = await fetch('/api/datasets/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: multiExportName.trim() || 'combined',
+          datasets: names,
+          split: multiExportSplit,
+          format: exportFormat,
+          group_split: exportGroupSplit,
+        }),
+      })
+      const data = await response.json()
+      if (response.ok) {
+        const total = data.counts.train + data.counts.val + data.counts.test
+        const missing = data.missing_annotations ?? 0
+        setStatus(
+          `Exported ${data.name}: train ${data.counts.train}, val ${data.counts.val}, test ${data.counts.test}` +
+            (missing > 0 ? ` — ${missing}/${total} images not annotated` : ''),
+        )
+        setMultiExportResult(data)
+      } else {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+      }
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setMultiExporting(false)
     }
   }
 
@@ -3156,7 +3216,7 @@ function App() {
   }, [datasetBatches, datasetBatchFilter])
 
   useEffect(() => {
-    setDatasetRemoveMode(false)
+    setDatasetSelectMode(false)
     setSelectedDatasetImages(new Set())
     setSimilarView(null)
   }, [activeDataset])
@@ -4089,7 +4149,7 @@ function App() {
                 {datasets.length}
               </span>
               <div className="ml-auto flex items-center gap-2">
-                {!removeDatasetMode && !createDatasetOpen && (
+                {!removeDatasetMode && !exportDatasetMode && !createDatasetOpen && (
                   <div ref={newDatasetMenuRef} className="relative">
                     <button
                       type="button"
@@ -4142,7 +4202,19 @@ function App() {
                     )}
                   </div>
                 )}
-                {!removeDatasetMode && !createDatasetOpen && (
+                {!removeDatasetMode && !exportDatasetMode && !createDatasetOpen && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExportDatasetMode(true)
+                      setSelectedDatasetsToExport(new Set())
+                    }}
+                    className="flex items-center gap-2 rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100"
+                  >
+                    Export datasets
+                  </button>
+                )}
+                {!removeDatasetMode && !exportDatasetMode && !createDatasetOpen && (
                   <button
                     type="button"
                     onClick={() => {
@@ -4153,6 +4225,33 @@ function App() {
                   >
                     Remove datasets
                   </button>
+                )}
+                {exportDatasetMode && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExportDatasetMode(false)
+                        setMultiExportName('')
+                        setMultiExportResult(null)
+                        setExportDatasetsOpen(true)
+                      }}
+                      disabled={selectedDatasetsToExport.size < 2}
+                      className="flex items-center gap-2 rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-medium text-white shadow transition hover:bg-emerald-600 disabled:opacity-40"
+                    >
+                      Export {selectedDatasetsToExport.size} dataset{selectedDatasetsToExport.size === 1 ? '' : 's'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExportDatasetMode(false)
+                        setSelectedDatasetsToExport(new Set())
+                      }}
+                      className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Cancel
+                    </button>
+                  </>
                 )}
                 {removeDatasetMode && (
                   <>
@@ -4198,17 +4297,31 @@ function App() {
                         }
                         return next
                       })
+                    } else if (exportDatasetMode) {
+                      setSelectedDatasetsToExport((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(d.name)) {
+                          next.delete(d.name)
+                        } else {
+                          next.add(d.name)
+                        }
+                        return next
+                      })
                     } else {
                       openDataset(d.name)
                     }
                   }}
                   className={`group relative aspect-video w-full cursor-pointer overflow-hidden rounded-lg shadow-sm transition hover:shadow-md ${
-                    activeDataset === d.name && !removeDatasetMode
+                    activeDataset === d.name && !removeDatasetMode && !exportDatasetMode
                       ? 'ring-2 ring-indigo-500 ring-offset-2 ring-offset-white'
                       : ''
                   } ${
                     selectedDatasetsToRemove.has(d.name)
                       ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-white'
+                      : ''
+                  } ${
+                    selectedDatasetsToExport.has(d.name)
+                      ? 'ring-2 ring-emerald-500 ring-offset-2 ring-offset-white'
                       : ''
                   }`}
                 >
@@ -4223,12 +4336,14 @@ function App() {
                       No images
                     </div>
                   )}
-                  {removeDatasetMode && (
+                  {(removeDatasetMode || exportDatasetMode) && (
                     <div
                       className={`absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white text-sm font-bold shadow ${
                         selectedDatasetsToRemove.has(d.name)
                           ? 'bg-red-500 text-white'
-                          : 'bg-white/50 text-transparent'
+                          : selectedDatasetsToExport.has(d.name)
+                            ? 'bg-emerald-500 text-white'
+                            : 'bg-white/50 text-transparent'
                       }`}
                     >
                       ✓
@@ -4665,18 +4780,18 @@ function App() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (datasetRemoveMode) {
+                        if (datasetSelectMode) {
                           setSelectedDatasetImages(new Set())
                         }
-                        setDatasetRemoveMode((v) => !v)
+                        setDatasetSelectMode((v) => !v)
                       }}
                       className={`rounded-full border px-4 py-1.5 text-sm font-medium transition ${
-                        datasetRemoveMode
-                          ? 'border-red-300 bg-red-50 text-red-600 hover:bg-red-100'
+                        datasetSelectMode
+                          ? 'border-indigo-300 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
                           : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
                       }`}
                     >
-                      {datasetRemoveMode ? 'Cancel' : 'Remove images'}
+                      {datasetSelectMode ? 'Cancel' : 'Select images'}
                     </button>
                     <button
                       type="button"
@@ -4755,7 +4870,7 @@ function App() {
                     refreshKey={datasetRefreshKey}
                     onImagesLoaded={handleDatasetImagesLoaded}
                     onOpenImage={openDatasetImage}
-                    removeMode={datasetRemoveMode}
+                    removeMode={datasetSelectMode}
                     selected={selectedDatasetImages}
                     onToggleSelect={toggleDatasetImageSelect}
                     mode={datasetGridMode}
@@ -5522,7 +5637,7 @@ function App() {
         />
       )}
 
-      {(datasetRemoveMode || similarView) && selectedDatasetImages.size > 0 && (
+      {(datasetSelectMode || similarView) && selectedDatasetImages.size > 0 && (
         <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-slate-200 bg-white/95 px-4 py-2 shadow-xl backdrop-blur">
           <span className="text-sm font-medium text-slate-700">
             {selectedDatasetImages.size} selected
@@ -5545,12 +5660,42 @@ function App() {
           </button>
           <button
             type="button"
+            onClick={() => {
+              setReviewSelectedImages([...selectedDatasetImages])
+              setReviewSelectedOpen(true)
+            }}
+            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+          >
+            Review
+          </button>
+          <button
+            type="button"
             onClick={() => setConfirmingRemoveDatasetImages(true)}
             className="rounded-full bg-red-500 px-4 py-1 text-sm font-medium text-white transition hover:bg-red-600"
           >
             Remove
           </button>
         </div>
+      )}
+
+      {reviewSelectedOpen && (
+        <ReviewSelectionModal
+          images={reviewSelectedImages}
+          selected={selectedDatasetImages}
+          onToggle={(src) =>
+            setSelectedDatasetImages((prev) => {
+              const next = new Set(prev)
+              if (next.has(src)) {
+                next.delete(src)
+              } else {
+                next.add(src)
+              }
+              return next
+            })
+          }
+          onRemove={() => setConfirmingRemoveDatasetImages(true)}
+          onClose={() => setReviewSelectedOpen(false)}
+        />
       )}
 
       {confirmingRemoveDatasetImages && (
@@ -5669,6 +5814,24 @@ function App() {
           exporting={exporting}
           onExport={doExportDataset}
           onClose={() => setShowExportPanel(false)}
+        />
+      )}
+
+      {exportDatasetsOpen && (
+        <ExportDatasetsModal
+          datasets={[...selectedDatasetsToExport]}
+          name={multiExportName}
+          onNameChange={setMultiExportName}
+          split={multiExportSplit}
+          onSplitChange={setMultiExportSplit}
+          format={exportFormat}
+          onFormatChange={setExportFormat}
+          groupSplit={exportGroupSplit}
+          onGroupSplitChange={setExportGroupSplit}
+          result={multiExportResult}
+          exporting={multiExporting}
+          onExport={doExportDatasets}
+          onClose={() => setExportDatasetsOpen(false)}
         />
       )}
 
