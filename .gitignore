@@ -39,6 +39,7 @@ lerna-debug.log*
 # Data / uploads (generated at runtime)
 server/uploads/
 server/datasets/
+server/exports/
 
 # Model weights / large binaries
 *.pt

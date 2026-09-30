@@ -54,8 +54,9 @@ RAW_IMAGES_DIR = UPLOADS_DIR / "raw-images"
 DATASETS_DIR = BASE_DIR / "datasets"
 TEMPLATES_DIR = BASE_DIR / "template"
 ARCHIVES_DIR = BASE_DIR / "archives"
+EXPORTS_DIR = BASE_DIR / "exports"
 
-for directory in (RAW_IMAGES_DIR, DATASETS_DIR, ARCHIVES_DIR):
+for directory in (RAW_IMAGES_DIR, DATASETS_DIR, ARCHIVES_DIR, EXPORTS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
@@ -2350,6 +2351,234 @@ def download_dataset(name: str, format: str = "tar"):
     if not archive_path.exists():
         raise HTTPException(status_code=404, detail="Export not found. Run export first.")
     return FileResponse(archive_path, filename=f"{name}.{ext}", media_type=media_type)
+
+
+def _slugify(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-").lower()
+    return slug or "dataset"
+
+
+@app.post("/datasets/export")
+def export_datasets(payload: dict | None = None):
+    """Merged multi-dataset export: one archive with per-dataset subdirs and
+    combined train/val/test lists, re-split globally across all images."""
+    payload = payload or {}
+    names = payload.get("datasets") or []
+    if not isinstance(names, list) or len(names) < 2:
+        raise HTTPException(status_code=400, detail="Select at least two datasets")
+    datasets = load_datasets()
+    missing = [n for n in names if n not in datasets]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Datasets not found: {', '.join(missing)}")
+
+    templates = {
+        ((datasets[n].get("framework") or "").strip(), (datasets[n].get("model") or "").strip())
+        for n in names
+    }
+    if len(templates) != 1:
+        raise HTTPException(status_code=400, detail="Datasets use different templates — merge would corrupt labels")
+    framework, model = next(iter(templates))
+    if not framework or not model:
+        raise HTTPException(status_code=400, detail="Dataset framework/model not set")
+    config = load_template_config(_normalize_template_path(framework, model))
+
+    split = payload.get("split") or _split_from_template(config)
+    try:
+        split = {k: int(v) for k, v in split.items()}
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Split values must be numbers")
+    if sum(split.values()) != 100:
+        raise HTTPException(status_code=400, detail="Split ratios must sum to 100")
+
+    folder_config = config.get("folder") or {}
+    folder_map = {s: s for s in folder_config.get("structure", ["train", "val", "test"])}
+    text_map = config.get("text", {}) or {}
+    attr_groups = config.get("attributes", [])
+    if attr_groups:
+        vector_length = max(max(g.get("indices", [0]) or [0]) for g in attr_groups) + 1
+    else:
+        vector_length = 26
+    default_values = [0] * vector_length
+
+    # unique per-dataset path prefixes
+    used_slugs: set[str] = set()
+    ds_slugs = {}
+    for n in names:
+        slug = _slugify(n)
+        base, i = slug, 2
+        while slug in used_slugs:
+            slug = f"{base}-{i}"
+            i += 1
+        used_slugs.add(slug)
+        ds_slugs[n] = slug
+
+    # gather files; dedupe shared images by path (first dataset wins)
+    files = []  # (abs_path, ds_slug, source_url)
+    labels = {}
+    duplicates = 0
+    seen = set()
+    db = SessionLocal()
+    try:
+        for n in names:
+            db_dataset = db.query(DbDataset).filter_by(name=n).first()
+            if not db_dataset:
+                continue
+            ann = load_annotations(datasets[n]["dir"])
+            rows = (
+                db.query(DbImage)
+                .join(DbDatasetImage, DbImage.id == DbDatasetImage.image_id)
+                .filter(DbDatasetImage.dataset_id == db_dataset.id)
+                .order_by(DbImage.path)
+                .all()
+            )
+            for db_image in rows:
+                img = (UPLOADS_DIR / db_image.path.removeprefix("/uploads/")).resolve()
+                if not (img.is_file() and img.is_relative_to(UPLOADS_DIR.resolve())):
+                    continue
+                if db_image.path in seen:
+                    duplicates += 1
+                    continue
+                seen.add(db_image.path)
+                files.append((img, ds_slugs[n], db_image.path))
+                if db_image.path in ann:
+                    labels[db_image.path] = ann[db_image.path]
+    finally:
+        db.close()
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No images found in selected datasets")
+
+    total = len(files)
+    group_split = payload.get("group_split", True)
+
+    if group_split and total > 1:
+        items = []
+        for f, slug, url in files:
+            mtime = f.stat().st_mtime
+            cached = _PHASH_CACHE.get(str(f))
+            if cached and cached[0] == mtime:
+                h = cached[1]
+            else:
+                h = _phash64(f)
+                if h is not None:
+                    _PHASH_CACHE[str(f)] = (mtime, h)
+            items.append((f, h, slug, url))
+        hashed = [(f, h) for f, h, _, _ in items if h is not None]
+        groups = (
+            _cluster_hashes(hashed, 12) if len(hashed) > 1 else [[f] for f, _ in hashed]
+        )
+        by_path = {f: (slug, url) for f, _, slug, url in items}
+        cluster_groups = [
+            [(f, *by_path[f]) for f in g] for g in groups
+        ]
+        cluster_groups += [[(f, slug, url)] for f, h, slug, url in items if h is None]
+        random.shuffle(cluster_groups)
+        targets = {s: total * split.get(s, 0) / 100 for s in ("train", "val", "test")}
+        split_files = {s: [] for s in ("train", "val", "test")}
+        for g in cluster_groups:
+            best = max(
+                targets,
+                key=lambda s: (targets[s] - len(split_files[s])) / max(targets[s], 1),
+            )
+            split_files[best].extend(g)
+    else:
+        random.shuffle(files)
+        n_train = round(total * split.get("train", 0) / 100)
+        n_val = round(total * split.get("val", 0) / 100)
+        items_all = [(f, slug, url) for f, slug, url in files]
+        split_files = {
+            "train": items_all[:n_train],
+            "val": items_all[n_train:n_train + n_val],
+            "test": items_all[n_train + n_val:],
+        }
+
+    export_name = _slugify(payload.get("name") or "combined")
+    export_dir = EXPORTS_DIR / export_name
+    if export_dir.exists():
+        shutil.rmtree(export_dir)
+    export_dir.mkdir(parents=True)
+
+    counts = {}
+    missing_annotations = 0
+    for split_name, split_list in split_files.items():
+        folder_name = folder_map.get(split_name, split_name)
+        text_name = text_map.get(split_name, f"{split_name}_list.txt")
+        lines = []
+        for f, slug, url in split_list:
+            target_dir = export_dir / slug / folder_name
+            target_dir.mkdir(parents=True, exist_ok=True)
+            dest = target_dir / f.name
+            if dest.exists():
+                dest = target_dir / f"{uuid.uuid4().hex[:8]}_{f.name}"
+            shutil.copy2(f, dest)
+            values = labels.get(url, default_values)
+            if url not in labels:
+                missing_annotations += 1
+            if len(values) < vector_length:
+                values = values + [0] * (vector_length - len(values))
+            elif len(values) > vector_length:
+                values = values[:vector_length]
+            label = ",".join(str(v) for v in values)
+            lines.append(f"{slug}/{folder_name}/{dest.name}\t{label}")
+        (export_dir / text_name).write_text(
+            "\n".join(lines) + ("\n" if lines else "")
+        )
+        counts[split_name] = len(split_list)
+
+    export_format = (payload.get("format") or "tar").strip().lower()
+    format_map = {
+        "tar": ("tar", "w", "application/x-tar"),
+        "zip": ("zip", None, "application/zip"),
+        "tar.gz": ("tar.gz", "w:gz", "application/gzip"),
+        "rar": ("rar", None, "application/vnd.rar"),
+    }
+    if export_format not in format_map:
+        raise HTTPException(status_code=400, detail="Unsupported export format")
+
+    ext, tar_mode, media_type = format_map[export_format]
+    archive_path = EXPORTS_DIR / f"{export_name}.{ext}"
+    if archive_path.exists():
+        archive_path.unlink()
+
+    if export_format == "zip":
+        import zipfile
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as z:
+            for item in sorted(export_dir.rglob("*")):
+                if item.is_file():
+                    z.write(item, arcname=item.relative_to(export_dir))
+    elif export_format == "rar":
+        import subprocess
+        if not shutil.which("rar"):
+            raise HTTPException(status_code=400, detail="rar binary not installed")
+        subprocess.run(
+            ["rar", "a", "-r", str(archive_path), str(export_dir)],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        with tarfile.open(archive_path, tar_mode) as tar:
+            for item in sorted(export_dir.rglob("*")):
+                tar.add(item, arcname=item.relative_to(export_dir))
+
+    return {
+        "name": export_name,
+        "datasets": names,
+        "counts": counts,
+        "duplicates": duplicates,
+        "missing_annotations": missing_annotations,
+        "format": export_format,
+        "split_strategy": "cluster" if group_split else "random",
+        "download": f"/exports/{export_name}.{ext}",
+    }
+
+
+@app.get("/exports/{file}")
+def download_export(file: str):
+    safe = Path(file).name
+    path = (EXPORTS_DIR / safe).resolve()
+    if not path.is_file() or path.parent != EXPORTS_DIR.resolve():
+        raise HTTPException(status_code=404, detail="Export not found")
+    return FileResponse(path, filename=safe)
 
 
 ARCHIVE_FORMATS = {
