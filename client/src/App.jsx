@@ -623,6 +623,7 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
   return (
     <button
       type="button"
+      data-img-path={src}
       onClick={() => (selectable ? onToggle(src) : onOpen(src))}
       className={`group relative block overflow-hidden rounded shadow transition hover:shadow-lg ${
         mode === 'natural' ? 'mb-3 w-full break-inside-avoid' : ''
@@ -2123,6 +2124,95 @@ function App() {
       return next
     })
   }, [])
+
+  // ---- marquee (drag) selection ----
+  const datasetGridRef = useRef(null)
+  const marqueeRef = useRef(null) // {sx, sy, cards, didDrag, hits} in page coords
+  const suppressGridClickRef = useRef(false)
+  const [marqueeRect, setMarqueeRect] = useState(null)
+
+  const onGridPointerDown = (e) => {
+    if (!(datasetSelectMode || similarView) || e.button !== 0) return
+    // let real buttons (Load more, cluster headers) work normally
+    if (e.target.closest('button:not([data-img-path])')) return
+    const sx = e.clientX + window.scrollX
+    const sy = e.clientY + window.scrollY
+    const cards = [
+      ...datasetGridRef.current.querySelectorAll('[data-img-path]'),
+    ].map((el) => {
+      const r = el.getBoundingClientRect()
+      return {
+        el,
+        path: el.dataset.imgPath,
+        l: r.left + window.scrollX,
+        t: r.top + window.scrollY,
+        r: r.right + window.scrollX,
+        b: r.bottom + window.scrollY,
+      }
+    })
+    marqueeRef.current = { sx, sy, cards, didDrag: false, hits: new Set() }
+    window.addEventListener('pointermove', onGridPointerMove)
+    window.addEventListener('pointerup', onGridPointerUp, { once: true })
+    window.addEventListener('pointercancel', onGridPointerUp, { once: true })
+  }
+
+  const onGridPointerMove = (e) => {
+    const st = marqueeRef.current
+    if (!st) return
+    const cx = e.clientX + window.scrollX
+    const cy = e.clientY + window.scrollY
+    if (!st.didDrag && Math.hypot(cx - st.sx, cy - st.sy) < 5) return
+    st.didDrag = true
+    const l = Math.min(st.sx, cx)
+    const t = Math.min(st.sy, cy)
+    const r = Math.max(st.sx, cx)
+    const b = Math.max(st.sy, cy)
+    // overlay is positioned inside the grid container -> convert page coords
+    const cr = datasetGridRef.current.getBoundingClientRect()
+    setMarqueeRect({
+      left: l - (cr.left + window.scrollX),
+      top: t - (cr.top + window.scrollY),
+      width: r - l,
+      height: b - t,
+    })
+    for (const c of st.cards) {
+      const hit = c.l < r && c.r > l && c.t < b && c.b > t
+      if (hit && !st.hits.has(c.path)) {
+        st.hits.add(c.path)
+        c.el.style.outline = '2px solid #818cf8'
+        c.el.style.outlineOffset = '-2px'
+      } else if (!hit && st.hits.has(c.path)) {
+        st.hits.delete(c.path)
+        c.el.style.outline = ''
+      }
+    }
+  }
+
+  const onGridPointerUp = () => {
+    window.removeEventListener('pointermove', onGridPointerMove)
+    window.removeEventListener('pointercancel', onGridPointerUp)
+    const st = marqueeRef.current
+    marqueeRef.current = null
+    setMarqueeRect(null)
+    if (!st) return
+    for (const c of st.cards) c.el.style.outline = ''
+    if (!st.didDrag) return
+    // eat the click that follows this same gesture, but only that one
+    suppressGridClickRef.current = true
+    setTimeout(() => {
+      suppressGridClickRef.current = false
+    }, 0)
+    if (st.hits.size) {
+      setSelectedDatasetImages((prev) => new Set([...prev, ...st.hits]))
+    }
+  }
+
+  const onGridClickCapture = (e) => {
+    if (suppressGridClickRef.current) {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+  }
 
   const openDatasetImage = useCallback(
     (src) => setDatasetModalIndex(datasetActiveImages.indexOf(src)),
@@ -4828,7 +4918,19 @@ function App() {
                 </div>
               )}
 
-              <div className="px-6 py-5">
+              <div
+                ref={datasetGridRef}
+                className={`relative px-6 py-5 ${datasetSelectMode || similarView ? 'select-none' : ''}`}
+                onPointerDown={onGridPointerDown}
+                onClickCapture={onGridClickCapture}
+                onDragStart={(e) => e.preventDefault()}
+              >
+              {marqueeRect && (
+                <div
+                  className="pointer-events-none absolute z-20 rounded border-2 border-indigo-400 bg-indigo-400/15"
+                  style={marqueeRect}
+                />
+              )}
               {similarView ? (
                 <DatasetSimilarView
                   clusters={similarView.clusters}
