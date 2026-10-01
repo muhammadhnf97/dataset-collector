@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import PrelabelStatsModal from './components/PrelabelStatsModal'
 import LeaderboardModal from './components/LeaderboardModal'
 import UserPickerModal from './components/UserPickerModal'
@@ -1166,7 +1167,17 @@ function App() {
   const [deleteBatchConfirmOpen, setDeleteBatchConfirmOpen] = useState(false)
   const [assignOpen, setAssignOpen] = useState(false)
   const [datasets, setDatasets] = useState([])
-  const [activePage, setActivePage] = useState('raw_image')
+  const location = useLocation()
+  const navigate = useNavigate()
+  // pages are real routes now: /raw-images, /datasets, /datasets/:name, /archives
+  const activePage = location.pathname.startsWith('/datasets')
+    ? 'datasets'
+    : location.pathname.startsWith('/archives')
+      ? 'archives'
+      : 'raw_image'
+  const datasetName = decodeURIComponent(
+    location.pathname.match(/^\/datasets\/([^/]+)/)?.[1] ?? '',
+  )
   const [activeDataset, setActiveDataset] = useState('')
   const [datasetBatches, setDatasetBatches] = useState([])
   const [datasetImageGroups, setDatasetImageGroups] = useState({})
@@ -1484,7 +1495,7 @@ function App() {
     }
     if (deleted > 0) {
       if (selectedDatasetsToRemove.has(activeDataset)) {
-        setActiveDataset('')
+        navigate('/datasets')
       }
       fetchDatasets()
     }
@@ -1706,17 +1717,25 @@ function App() {
     }
   }
 
-  const openDataset = async (name) => {
-    if (activeDataset === name) {
-      setActiveDataset('')
+  const openDataset = (name) => {
+    navigate(`/datasets/${encodeURIComponent(name)}`)
+  }
+
+  // /datasets/:name drives the workspace — the URL is the source of truth.
+  useEffect(() => {
+    if (!datasetName) {
+      if (activeDataset) setActiveDataset('')
       return
     }
-    setExportResult(null)
-    setExportFormat('tar')
-    setShowExportPanel(false)
-    setDatasetBatchFilter(null)
-    await refreshDataset(name)
-  }
+    if (datasetName !== activeDataset) {
+      setExportResult(null)
+      setExportFormat('tar')
+      setShowExportPanel(false)
+      setDatasetBatchFilter(null)
+      refreshDataset(datasetName)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetName])
 
   const fetchTemplates = async () => {
     try {
@@ -2819,7 +2838,7 @@ function App() {
         setStatus(`Assigned ${data.batch} to ${data.dataset}`)
         setAssignToDatasetOpen(false)
         fetchDatasets()
-        openDataset(activeDataset)
+        refreshDataset(activeDataset)
       } else {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
       }
@@ -2904,7 +2923,7 @@ function App() {
       }
       setStatus(`Deleted dataset ${activeDataset}`)
       setDatasetSettingsOpen(false)
-      setActiveDataset('')
+      navigate('/datasets')
       fetchDatasets()
     } catch {
       setStatus('Failed: could not reach the server')
@@ -2938,10 +2957,8 @@ function App() {
       setDatasetSettingsOpen(false)
       const newName = data.dataset
       fetchDatasets().then(() => {
-        if (activeDataset !== newName) {
-          setActiveDataset(newName)
-        }
-        refreshDataset(newName)
+        // the URL param syncs activeDataset via the route effect
+        navigate(`/datasets/${encodeURIComponent(newName)}`)
       })
     } catch {
       setStatus('Failed: could not reach the server')
@@ -3086,7 +3103,7 @@ function App() {
           ? `Pre-labeled ${data.images} images`
           : `Pre-labeled ${data.images} images (predictions only, values untouched)`,
       )
-      openDataset(activeDataset)
+      refreshDataset(activeDataset)
     } catch {
       setStatus('Failed: could not reach the server')
     } finally {
@@ -3501,7 +3518,7 @@ function App() {
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setActivePage('raw_image')}
+              onClick={() => navigate('/raw-images')}
               className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                 activePage === 'raw_image'
                   ? 'bg-indigo-500 text-white shadow'
@@ -3512,7 +3529,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActivePage('datasets')}
+              onClick={() => navigate('/datasets')}
               className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                 activePage === 'datasets'
                   ? 'bg-indigo-500 text-white shadow'
@@ -3523,7 +3540,7 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => setActivePage('archives')}
+              onClick={() => navigate('/archives')}
               className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                 activePage === 'archives'
                   ? 'bg-indigo-500 text-white shadow'
@@ -4257,7 +4274,7 @@ function App() {
         </section>
         )}
 
-        {activePage === 'datasets' && (
+        {activePage === 'datasets' && !datasetName && (
           <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
             <div className="flex items-baseline gap-3">
               <h2 className="text-lg font-semibold text-slate-800">Datasets</h2>
@@ -4483,8 +4500,10 @@ function App() {
               ))}
             </div>
           )}
+          </section>
+        )}
 
-          {activeDataset && (() => {
+        {datasetName && activeDataset && (() => {
             const visibleStems = datasetBatchFilter
               ? [datasetBatchFilter]
               : datasetBatches
@@ -4500,6 +4519,16 @@ function App() {
             return (
             <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
               <div className="flex items-center gap-3 px-6 py-4">
+                <button
+                  type="button"
+                  onClick={() => navigate('/datasets')}
+                  title="Back to datasets"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-200 hover:text-slate-800"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
                 <h2 className="text-lg font-semibold text-slate-800">
                   {activeDataset}
                 </h2>
@@ -4598,13 +4627,6 @@ function App() {
                         clipRule="evenodd"
                       />
                     </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setActiveDataset('')}
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-200 hover:text-slate-800"
-                  >
-                    ×
                   </button>
                 </div>
               </div>
@@ -5118,8 +5140,6 @@ function App() {
             </section>
             )
           })()}
-        </section>
-        )}
 
         {activePage === 'archives' && (
           <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
