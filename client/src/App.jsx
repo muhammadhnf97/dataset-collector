@@ -1222,6 +1222,8 @@ function App() {
   const exportMenuRef = useRef(null)
   const [handlersMenuOpen, setHandlersMenuOpen] = useState(false)
   const handlersMenuRef = useRef(null)
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false)
+  const batchMenuRef = useRef(null)
   const [newDatasetMenuOpen, setNewDatasetMenuOpen] = useState(false)
   const newDatasetMenuRef = useRef(null)
   const [archives, setArchives] = useState([])
@@ -1324,6 +1326,27 @@ function App() {
     }
     return { total, annotated }
   }, [datasetBatchStats])
+
+  // Per-batch count of fully-reviewed images — every attribute group checked
+  // (or an "all" review), matching the emerald card badge.
+  const batchReviewedCounts = useMemo(() => {
+    const groups = datasetAttributes?.length ?? 0
+    const counts = {}
+    for (const [img, rev] of Object.entries(datasetReviewed ?? {})) {
+      if (!rev) continue
+      const done =
+        (rev.all && Object.keys(rev.all).length > 0) ||
+        (groups > 0 &&
+          Array.from({ length: groups }, (_, gi) => gi).every(
+            (gi) => rev[String(gi)] && Object.keys(rev[String(gi)]).length > 0,
+          ))
+      if (!done) continue
+      const parts = img.split('/').filter(Boolean)
+      const stem = parts.length >= 2 ? `raw-images_${parts[parts.length - 2]}` : null
+      if (stem) counts[stem] = (counts[stem] ?? 0) + 1
+    }
+    return counts
+  }, [datasetReviewed, datasetAttributes])
 
   const datasetActiveImages = useMemo(() => {
     if (similarView) {
@@ -3239,7 +3262,7 @@ function App() {
   }, [attrMenuOpen])
 
   useEffect(() => {
-    if (!exportMenuOpen && !newDatasetMenuOpen && !handlersMenuOpen) return
+    if (!exportMenuOpen && !newDatasetMenuOpen && !handlersMenuOpen && !batchMenuOpen) return
     const handleClick = (e) => {
       if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
         setExportMenuOpen(false)
@@ -3256,10 +3279,13 @@ function App() {
       ) {
         setHandlersMenuOpen(false)
       }
+      if (batchMenuRef.current && !batchMenuRef.current.contains(e.target)) {
+        setBatchMenuOpen(false)
+      }
     }
     window.addEventListener('mousedown', handleClick)
     return () => window.removeEventListener('mousedown', handleClick)
-  }, [exportMenuOpen, newDatasetMenuOpen, handlersMenuOpen])
+  }, [exportMenuOpen, newDatasetMenuOpen, handlersMenuOpen, batchMenuOpen])
 
   useEffect(() => {
     if (activePage === 'archives' || archivesOpen || importArchiveOpen) {
@@ -4586,24 +4612,130 @@ function App() {
               {datasetBatches.length > 0 && (
                 <div className="flex items-center gap-3 border-y border-slate-200/70 bg-slate-50/60 px-6 py-3">
                   <span className="text-sm font-medium text-slate-500">Batch</span>
-                  <select
-                    value={datasetBatchFilter ?? datasetBatches[0] ?? ''}
-                    onChange={(e) => {
-                      setDatasetBatchFilter(e.target.value)
-                      setSelectedDatasetImages(new Set())
-                      setSimilarView(null)
-                    }}
-                    className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none"
-                  >
-                    {datasetBatches.map((batch) => (
-                      <option key={batch} value={batch}>
-                        {batch}
-                        {datasetBatchSources[batch]
-                          ? ` — ${datasetBatchSources[batch].name} · v${datasetBatchSources[batch].version}`
-                          : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <div ref={batchMenuRef} className="relative">
+                    {(() => {
+                      const current = datasetBatchFilter ?? datasetBatches[0] ?? ''
+                      const curLabel = `${current}${
+                        datasetBatchSources[current]
+                          ? ` — ${datasetBatchSources[current].name} · v${datasetBatchSources[current].version}`
+                          : ''
+                      }`
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setBatchMenuOpen((v) => !v)}
+                          title={curLabel}
+                          className="flex max-w-72 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none transition hover:bg-slate-100"
+                        >
+                          <span className="truncate">{curLabel}</span>
+                          <span className="text-slate-400">▾</span>
+                        </button>
+                      )
+                    })()}
+                    {batchMenuOpen && (
+                      <div className="absolute left-0 top-full z-40 mt-1 w-96 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                        <div className="max-h-80 overflow-y-auto">
+                          {datasetBatches.map((batch) => {
+                            const label = `${batch}${
+                              datasetBatchSources[batch]
+                                ? ` — ${datasetBatchSources[batch].name} · v${datasetBatchSources[batch].version}`
+                                : ''
+                            }`
+                            const info = batchHandlers[batch]
+                            const pct =
+                              info?.coverage != null
+                                ? Math.round(info.coverage * 100)
+                                : 0
+                            const stats = datasetBatchStats[batch]
+                            const hs = (info?.handlers ?? []).map((h) => h.user)
+                            const hsLabel =
+                              hs.length > 2
+                                ? `${hs.slice(0, 2).join(', ')} +${hs.length - 2}`
+                                : hs.join(', ')
+                            const isCurrent =
+                              batch === (datasetBatchFilter ?? datasetBatches[0])
+                            const revCount = batchReviewedCounts[batch] ?? 0
+                            const annAll =
+                              (stats?.total ?? 0) > 0 &&
+                              stats.annotated === stats.total
+                            const untouched =
+                              (stats?.annotated ?? 0) === 0 && pct === 0
+                            const dotCls =
+                              pct >= 100
+                                ? 'bg-emerald-500'
+                                : untouched
+                                  ? 'border border-slate-300 bg-transparent'
+                                  : 'bg-indigo-500'
+                            return (
+                              <button
+                                key={batch}
+                                type="button"
+                                onClick={() => {
+                                  setDatasetBatchFilter(batch)
+                                  setSelectedDatasetImages(new Set())
+                                  setSimilarView(null)
+                                  setBatchMenuOpen(false)
+                                }}
+                                className={`block w-full px-3 py-2 text-left transition hover:bg-indigo-50 ${
+                                  isCurrent ? 'bg-indigo-50/60' : ''
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span
+                                    className="flex min-w-0 items-center truncate text-sm font-medium text-slate-700"
+                                    title={label}
+                                  >
+                                    <span
+                                      className={`mr-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${dotCls}`}
+                                    />
+                                    {isCurrent && (
+                                      <span className="mr-1 text-indigo-500">✓</span>
+                                    )}
+                                    <span className="truncate">{label}</span>
+                                  </span>
+                                  <span
+                                    className={`shrink-0 text-xs font-semibold ${
+                                      pct >= 100
+                                        ? 'text-emerald-600'
+                                        : pct > 0
+                                          ? 'text-indigo-600'
+                                          : 'text-slate-400'
+                                    }`}
+                                  >
+                                    {pct >= 100 ? '✓ ' : ''}
+                                    {pct}%
+                                  </span>
+                                </div>
+                                <div className="mt-1 h-1 overflow-hidden rounded-full bg-slate-200">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${
+                                      pct >= 100 ? 'bg-emerald-500' : 'bg-indigo-500'
+                                    }`}
+                                    style={{ width: `${Math.min(pct, 100)}%` }}
+                                  />
+                                </div>
+                                <div className="mt-0.5 truncate text-[11px] text-slate-400">
+                                  {annAll ? (
+                                    <span className="text-emerald-600">
+                                      Pre-labels ✓
+                                    </span>
+                                  ) : (stats?.annotated ?? 0) > 0 ? (
+                                    `Pre-labels ${stats.annotated}/${stats.total}`
+                                  ) : (
+                                    <span className="italic text-amber-600">
+                                      not pre-labeled yet
+                                    </span>
+                                  )}
+                                  {` · reviewed ${revCount}/${stats?.total ?? 0}`}
+                                  {hsLabel ? ` · ${hsLabel}` : ''}
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
                     {(datasetBatchStats[datasetBatchFilter]?.annotated ??
                       0)}{' '}
