@@ -195,7 +195,7 @@ export default function DatasetWorkspace() {
   return (
     <>
       <section className="relative z-20 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
-        <div className="flex items-center gap-3 px-6 py-4">
+        <div className="flex flex-wrap items-center gap-3 px-6 py-4">
           <BackToDatasets />
           <h2 className="text-lg font-semibold text-slate-800">
             {activeDataset}
@@ -203,109 +203,12 @@ export default function DatasetWorkspace() {
           <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
             {datasetTotals.annotated} / {datasetTotals.total} annotated
           </span>
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setImportBatchOpen(true)}
-              className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
-            >
-              Import batch
-            </button>
-            <div ref={exportMenuRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setExportMenuOpen((v) => !v)}
-                disabled={datasetBatches.length === 0}
-                className="flex items-center gap-1.5 rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
-              >
-                Export
-                <svg
-                  className={`h-4 w-4 transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={2}
-                  stroke="currentColor"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-                </svg>
-              </button>
-              {exportMenuOpen && (
-                <div className="absolute right-0 z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExportMenuOpen(false)
-                      setShowExportPanel(true)
-                    }}
-                    className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
-                  >
-                    <span className="block font-medium">Export dataset</span>
-                    <span className="block text-xs text-slate-400">
-                      Train-format archive for the model
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExportMenuOpen(false)
-                      setArchivesOpen(true)
-                    }}
-                    className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
-                  >
-                    <span className="block font-medium">Archives</span>
-                    <span className="block text-xs text-slate-400">
-                      Restorable snapshots stored on the server
-                    </span>
-                  </button>
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={fetchPrelabelStats}
-              disabled={!templatePath || prelabelStatsLoading}
-              className="rounded-full border border-amber-300 bg-amber-50 px-4 py-1.5 text-sm font-medium text-amber-600 transition hover:bg-amber-100 disabled:opacity-40"
-            >
-              {prelabelStatsLoading ? 'Loading...' : 'Pre-label Stats'}
-            </button>
-            <button
-              type="button"
-              onClick={fetchActivity}
-              disabled={activityLoading}
-              className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
-            >
-              {activityLoading ? 'Loading...' : 'Leaderboard'}
-            </button>
-            <button
-              type="button"
-              onClick={openDatasetSettings}
-              title="Dataset settings"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {datasetBatches.length > 0 && (
-          <div className="flex items-center gap-3 border-y border-slate-200/70 bg-slate-50/60 px-6 py-3">
-            <span className="text-sm font-medium text-slate-500">Batch</span>
+          {datasetBatches.length > 0 && (
+            <>
             <div ref={batchMenuRef} className="relative">
               {(() => {
                 const current = datasetBatchFilter ?? datasetBatches[0] ?? ''
-                const curLabel = `${current}${
+                const curLabel = `${current.replace(/^raw-images_/, '')}${
                   datasetBatchSources[current]
                     ? ` — ${datasetBatchSources[current].name} · v${datasetBatchSources[current].version}`
                     : ''
@@ -315,7 +218,7 @@ export default function DatasetWorkspace() {
                     type="button"
                     onClick={() => setBatchMenuOpen((v) => !v)}
                     title={curLabel}
-                    className="flex max-w-72 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm text-slate-700 outline-none transition hover:bg-slate-100"
+                    className="flex w-48 items-center gap-1.5 rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 outline-none transition hover:bg-slate-100"
                   >
                     <span className="truncate">{curLabel}</span>
                     <span className="text-slate-400">▾</span>
@@ -476,6 +379,106 @@ export default function DatasetWorkspace() {
                 </div>
               )
             })()}
+            </>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setImportBatchOpen(true)}
+              className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
+            >
+              Import batch
+            </button>
+            <div ref={exportMenuRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setExportMenuOpen((v) => !v)}
+                disabled={datasetBatches.length === 0}
+                className="flex items-center gap-1.5 rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
+              >
+                Export
+                <svg
+                  className={`h-4 w-4 transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                </svg>
+              </button>
+              {exportMenuOpen && (
+                <div className="absolute right-0 z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExportMenuOpen(false)
+                      setShowExportPanel(true)
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                  >
+                    <span className="block font-medium">Export dataset</span>
+                    <span className="block text-xs text-slate-400">
+                      Train-format archive for the model
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExportMenuOpen(false)
+                      setArchivesOpen(true)
+                    }}
+                    className="block w-full border-t border-slate-100 px-4 py-2 text-left text-sm text-slate-700 hover:bg-indigo-50"
+                  >
+                    <span className="block font-medium">Archives</span>
+                    <span className="block text-xs text-slate-400">
+                      Restorable snapshots stored on the server
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={fetchPrelabelStats}
+              disabled={!templatePath || prelabelStatsLoading}
+              className="rounded-full border border-amber-300 bg-amber-50 px-4 py-1.5 text-sm font-medium text-amber-600 transition hover:bg-amber-100 disabled:opacity-40"
+            >
+              {prelabelStatsLoading ? 'Loading...' : 'Pre-label Stats'}
+            </button>
+            <button
+              type="button"
+              onClick={fetchActivity}
+              disabled={activityLoading}
+              className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
+            >
+              {activityLoading ? 'Loading...' : 'Leaderboard'}
+            </button>
+            <button
+              type="button"
+              onClick={openDatasetSettings}
+              title="Dataset settings"
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-800"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {datasetBatches.length > 0 && (
+          <div className="flex items-center gap-3 border-y border-slate-200/70 bg-slate-50/60 px-6 py-3">
             <button
               type="button"
               onClick={() =>
