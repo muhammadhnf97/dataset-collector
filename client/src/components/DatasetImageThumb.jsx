@@ -42,7 +42,7 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
       type="button"
       data-img-path={src}
       onClick={() => (selectable ? onToggle(src) : onOpen(src))}
-      className={`group relative block overflow-hidden rounded shadow transition hover:shadow-lg ${
+      className={`group relative block rounded transition ${
         mode === 'natural' ? 'mb-3 w-full break-inside-avoid' : ''
       }`}
     >
@@ -51,7 +51,7 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
         alt=""
         loading="lazy"
         decoding="async"
-        className={`w-full ${
+        className={`w-full rounded shadow transition group-hover:shadow-lg ${
           mode === 'natural'
             ? 'h-auto'
             : `object-cover ${mode === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}`
@@ -94,40 +94,31 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
           </svg>
         </span>
       )}
-      {reviewedCount > 0 && (
+      {(reviewedCount > 0 || reviewers.length > 0) && (
         <span
-          className={`absolute right-1 top-1 flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold shadow ${
-            allReviewed ? 'bg-emerald-500 text-white' : 'bg-yellow-400 text-slate-800'
+          className={`absolute -right-0.5 -top-0.5 z-10 h-0 w-0 border-l-[20px] border-t-[20px] border-l-transparent drop-shadow-sm ${
+            allReviewed
+              ? 'border-t-emerald-500'
+              : reviewedCount > 0
+                ? 'border-t-amber-400'
+                : 'border-t-sky-500'
           }`}
-        >
-          {reviewedCount}/{groups.length}
-          {annotatedAgo && !selectable && (
-            <span className="font-normal opacity-90">· {annotatedAgo}</span>
-          )}
-        </span>
+        />
       )}
-      {reviewers.length > 0 && (
-        <span
-          title={reviewers.map((r) => `${r.user}${r.ago ? ` · ${r.ago}` : ''}`).join('\n')}
-          className={`absolute right-1 ${reviewedCount > 0 ? 'top-7' : 'top-1'} flex max-w-[85%] items-center gap-1 truncate rounded-full bg-sky-500/90 px-2 py-0.5 text-[10px] font-bold text-white shadow`}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            className="h-2.5 w-2.5 shrink-0"
-          >
-            <path d="M10 12.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z" />
-            <path
-              fillRule="evenodd"
-              d="M.664 10.59a1.651 1.651 0 010-1.186A10.004 10.004 0 0110 3c4.257 0 7.893 2.66 9.336 6.41.147.381.146.804 0 1.186A10.004 10.004 0 0110 17c-4.257 0-7.893-2.66-9.336-6.41zM14 10a4 4 0 11-8 0 4 4 0 018 0z"
-              clipRule="evenodd"
-            />
-          </svg>
-          <span className="truncate">
-            {reviewers[0].user}
-            {reviewers.length > 1 && ` +${reviewers.length - 1}`}
-          </span>
+      {(reviewedCount > 0 || reviewers.length > 0) && !selectable && (
+        <span className="absolute -right-1 top-4 z-20 hidden min-w-32 flex-col gap-0.5 rounded-lg bg-black/80 px-2 py-1 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm group-hover:flex">
+          {reviewedCount > 0 && (
+            <span>
+              {reviewedCount}/{groups.length} reviewed
+              {annotatedAgo ? ` · ${annotatedAgo}` : ''}
+            </span>
+          )}
+          {reviewers.map((r) => (
+            <span key={r.user} className="opacity-90">
+              {r.user}
+              {r.ago ? ` · ${r.ago}` : ''}
+            </span>
+          ))}
         </span>
       )}
       {isLastEdited && (
