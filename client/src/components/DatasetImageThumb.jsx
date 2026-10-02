@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useMemo, useState } from 'react'
 import SkeletonImg from './SkeletonImg'
 import { formatRelativeTime, mergeReviewerMaps, sortedReviewers } from '../utils'
 
@@ -14,6 +14,7 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
   onOpen,
   onToggle,
 }) {
+  const [imgLoaded, setImgLoaded] = useState(false)
   const mergedReviewers = useMemo(
     () => (reviewedBy ? mergeReviewerMaps(...Object.values(reviewedBy)) : null),
     [reviewedBy],
@@ -51,6 +52,7 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
         alt=""
         loading="lazy"
         decoding="async"
+        onLoad={() => setImgLoaded(true)}
         className={`w-full rounded shadow transition group-hover:shadow-lg ${
           mode === 'natural'
             ? 'h-auto'
@@ -94,7 +96,7 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
           </svg>
         </span>
       )}
-      {(reviewedCount > 0 || reviewers.length > 0) && (
+      {imgLoaded && (reviewedCount > 0 || reviewers.length > 0) && (
         <span
           className={`absolute -right-0.5 -top-0.5 z-10 h-0 w-0 border-l-[20px] border-t-[20px] border-l-transparent drop-shadow-sm ${
             allReviewed
@@ -105,7 +107,7 @@ const DatasetImageThumb = memo(function DatasetImageThumb({
           }`}
         />
       )}
-      {(reviewedCount > 0 || reviewers.length > 0) && !selectable && (
+      {imgLoaded && (reviewedCount > 0 || reviewers.length > 0) && !selectable && (
         <span className="absolute -right-1 top-4 z-20 hidden min-w-32 flex-col gap-0.5 rounded-lg bg-black/80 px-2 py-1 text-[10px] font-medium text-white shadow-lg backdrop-blur-sm group-hover:flex">
           {reviewedCount > 0 && (
             <span>
