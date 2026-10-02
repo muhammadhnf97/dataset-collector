@@ -194,8 +194,8 @@ export default function DatasetWorkspace() {
 
   return (
     <>
-      <section className="relative z-20 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
-        <div className="flex flex-wrap items-center gap-3 px-6 py-4">
+      <section className="relative z-20 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 px-5 py-3">
           <BackToDatasets />
           <h2 className="text-lg font-semibold text-slate-800">
             {activeDataset}
@@ -382,19 +382,33 @@ export default function DatasetWorkspace() {
             </>
           )}
           <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setImportBatchOpen(true)}
-              className="rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100"
-            >
-              Import batch
-            </button>
+            <div className="flex overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
+              <button
+                type="button"
+                onClick={() => setImportBatchOpen(true)}
+                className="px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100"
+              >
+                Attach batch
+              </button>
+              <button
+                type="button"
+                disabled={!datasetBatchFilter}
+                onClick={() => {
+                  setDatasetBatchToRemove(datasetBatchFilter)
+                  setConfirmingRemoveDatasetBatch(true)
+                }}
+                title={datasetBatchFilter ? `Detach ${datasetBatchFilter} from this dataset` : 'No batch selected'}
+                className="border-l border-indigo-300 px-3 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50 disabled:opacity-40"
+              >
+                Detach
+              </button>
+            </div>
             <div ref={exportMenuRef} className="relative">
               <button
                 type="button"
                 onClick={() => setExportMenuOpen((v) => !v)}
                 disabled={datasetBatches.length === 0}
-                className="flex items-center gap-1.5 rounded-full border border-indigo-300 bg-indigo-50 px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-full border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-50"
               >
                 Export
                 <svg
@@ -443,7 +457,7 @@ export default function DatasetWorkspace() {
               type="button"
               onClick={fetchPrelabelStats}
               disabled={!templatePath || prelabelStatsLoading}
-              className="rounded-full border border-amber-300 bg-amber-50 px-4 py-1.5 text-sm font-medium text-amber-600 transition hover:bg-amber-100 disabled:opacity-40"
+              className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-600 transition hover:bg-amber-100 disabled:opacity-40"
             >
               {prelabelStatsLoading ? 'Loading...' : 'Pre-label Stats'}
             </button>
@@ -451,7 +465,7 @@ export default function DatasetWorkspace() {
               type="button"
               onClick={fetchActivity}
               disabled={activityLoading}
-              className="rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
+              className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
             >
               {activityLoading ? 'Loading...' : 'Leaderboard'}
             </button>
@@ -478,7 +492,7 @@ export default function DatasetWorkspace() {
         </div>
 
         {datasetBatches.length > 0 && (
-          <div className="flex items-center gap-3 border-y border-slate-200/70 bg-slate-50/60 px-6 py-3">
+          <div className="flex shrink-0 items-center gap-3 border-y border-slate-200/70 bg-slate-50/60 px-5 py-2">
             <button
               type="button"
               onClick={() =>
@@ -727,22 +741,11 @@ export default function DatasetWorkspace() {
                     ? 'Exit similar'
                     : 'Group similar'}
               </button>
-              {datasetBatchFilter && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDatasetBatchToRemove(datasetBatchFilter)
-                    setConfirmingRemoveDatasetBatch(true)
-                  }}
-                  className="rounded-full bg-red-500/10 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-500/20"
-                >
-                  Remove current batch
-                </button>
-              )}
             </div>
           </div>
         )}
 
+        <div className="min-h-0 flex-1 overflow-y-auto">
         <div
           ref={datasetGridRef}
           className={`relative px-6 py-5 ${datasetSelectMode || similarView ? 'select-none' : ''}`}
@@ -807,6 +810,7 @@ export default function DatasetWorkspace() {
             />
           ))
         )}
+        </div>
         </div>
       </section>
 
@@ -1216,8 +1220,9 @@ export default function DatasetWorkspace() {
             datasetBatchStats[datasetBatchToRemove]?.total ??
             (datasetImageGroups[datasetBatchToRemove] ?? []).length
           }
-          title={`Remove ${datasetBatchToRemove}?`}
+          title={`Detach ${datasetBatchToRemove}?`}
           message="This removes all images in this batch from the dataset. The original files will not be deleted."
+          confirmLabel="Detach"
           onCancel={() => setConfirmingRemoveDatasetBatch(false)}
           onConfirm={removeDatasetBatch}
         />
