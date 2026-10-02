@@ -1,4 +1,3 @@
-import { useNavigate } from 'react-router-dom'
 import ArchivesModal from '../components/ArchivesModal'
 import AssignToDatasetModal from '../components/AssignToDatasetModal'
 import BatchWarnModal from '../components/BatchWarnModal'
@@ -199,7 +198,6 @@ export default function DatasetWorkspace() {
     <>
       <section className="relative z-20 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
         <div className="flex shrink-0 flex-wrap items-center gap-2 px-5 py-3">
-          <BackToDatasets />
           <h2 className="text-lg font-semibold text-slate-800">
             {activeDataset}
           </h2>
@@ -579,7 +577,7 @@ export default function DatasetWorkspace() {
                     onClick={() => doPrelabel(true)}
                     disabled={!templatePath || preLabeling}
                     title="Runs the model and overwrites both the corrected value and the pre-label prediction"
-                    className="px-4 py-1.5 text-sm font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+                    className="px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
                   >
                     {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
                   </button>
@@ -658,7 +656,7 @@ export default function DatasetWorkspace() {
                     type="button"
                     onClick={() => requireUser(() => openAttrAnnotate(activeDataset, templatePath, datasetBatchFilter))}
                     disabled={!templatePath || preLabeling}
-                    className="px-4 py-1.5 text-sm font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
+                    className="px-3 py-1 text-xs font-medium text-emerald-600 transition hover:bg-emerald-100 disabled:opacity-40"
                   >
                     Correct Attribute
                   </button>
@@ -744,7 +742,7 @@ export default function DatasetWorkspace() {
                   }
                   setDatasetSelectMode((v) => !v)
                 }}
-                className={`rounded-full border px-4 py-1.5 text-sm font-medium transition ${
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                   datasetSelectMode
                     ? 'border-indigo-300 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
                     : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
@@ -759,7 +757,7 @@ export default function DatasetWorkspace() {
                 }
                 disabled={similarLoading || !datasetBatchFilter}
                 title="Group near-duplicate images together for review"
-                className={`rounded-full border px-4 py-1.5 text-sm font-medium transition disabled:opacity-40 ${
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition disabled:opacity-40 ${
                   similarView
                     ? 'border-violet-300 bg-violet-50 text-violet-600 hover:bg-violet-100'
                     : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
@@ -1389,18 +1387,3 @@ export default function DatasetWorkspace() {
   )
 }
 
-function BackToDatasets() {
-  const navigate = useNavigate()
-  return (
-    <button
-      type="button"
-      onClick={() => navigate('/datasets')}
-      title="Back to datasets"
-      className="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-200 hover:text-slate-800"
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-      </svg>
-    </button>
-  )
-}
