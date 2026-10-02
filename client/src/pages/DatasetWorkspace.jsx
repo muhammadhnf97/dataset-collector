@@ -199,7 +199,7 @@ export default function DatasetWorkspace() {
   return (
     <>
       <section className="relative z-20 flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
-        <div className="flex shrink-0 flex-wrap items-center gap-2 px-5 py-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200/70 px-5 py-3">
           <h2 className="text-lg font-semibold text-slate-800">
             {activeDataset}
           </h2>
@@ -804,7 +804,7 @@ export default function DatasetWorkspace() {
         <div className="h-full overflow-y-auto">
         <div
           ref={datasetGridRef}
-          className={`relative px-6 py-5 ${datasetSelectMode || similarView ? 'select-none' : ''}`}
+          className={`relative px-6 pb-5 pt-2 ${datasetSelectMode || similarView ? 'select-none' : ''}`}
           onPointerDown={onGridPointerDown}
           onClickCapture={onGridClickCapture}
           onDragStart={(e) => e.preventDefault()}
