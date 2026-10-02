@@ -194,7 +194,7 @@ export default function DatasetWorkspace() {
 
   return (
     <>
-      <section className="relative z-20 mt-6 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
+      <section className="relative z-20 min-w-0 overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
         <div className="flex items-center gap-3 px-6 py-4">
           <BackToDatasets />
           <h2 className="text-lg font-semibold text-slate-800">

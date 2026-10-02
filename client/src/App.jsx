@@ -10,7 +10,7 @@ import ConfirmModal from './components/ConfirmModal'
 import UserPickerModal from './components/UserPickerModal'
 import ArchivesPage from './pages/ArchivesPage'
 import DatasetWorkspace from './pages/DatasetWorkspace'
-import DatasetsPage from './pages/DatasetsPage'
+import DatasetsLayout, { DatasetsEmptyState } from './pages/DatasetsLayout'
 import RawImagesPage from './pages/RawImagesPage'
 import { useAppData } from './context/AppDataContext'
 import { useUser } from './context/UserContext'
@@ -138,8 +138,10 @@ function App() {
           <Route path="/" element={<Navigate to="/raw-images" replace />} />
           <Route path="/raw-images" element={<RawImagesPage />} />
           <Route path="/raw-images/:batch" element={<RawImagesPage />} />
-          <Route path="/datasets" element={<DatasetsPage />} />
-          <Route path="/datasets/:name" element={<DatasetWorkspace />} />
+          <Route path="/datasets" element={<DatasetsLayout />}>
+            <Route index element={<DatasetsEmptyState />} />
+            <Route path=":name" element={<DatasetWorkspace />} />
+          </Route>
           <Route path="/archives" element={<ArchivesPage />} />
           <Route path="*" element={<Navigate to="/raw-images" replace />} />
         </Routes>
