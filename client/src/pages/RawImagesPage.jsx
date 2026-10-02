@@ -506,7 +506,7 @@ export default function RawImagesPage() {
           </div>
         ) : (
           <>
-            <div className="shrink-0 p-6 pb-0">
+            <div className="shrink-0 border-b border-slate-200/70 px-6 py-4">
             <div className="flex flex-wrap items-center gap-3">
               <h3 className="text-base font-semibold text-slate-800">
                 {selectedRaw}
