@@ -9,7 +9,7 @@ import SourceModal from '../components/SourceModal'
 import UploadSourceModal from '../components/UploadSourceModal'
 import { ArchiveIcon } from '../components/icons'
 import { useAppData } from '../context/AppDataContext'
-import { GRID_COLS, GRID_COL_OPTIONS, MASONRY_COLS } from '../utils'
+import { GRID_COLS, GRID_COL_OPTIONS, MASONRY_COLS, useLocalStorage } from '../utils'
 
 const IMAGES_PER_PAGE = 50
 
@@ -45,9 +45,9 @@ export default function RawImagesPage() {
   const [batchFilter, setBatchFilter] = useState('')
   const [inUseOnly, setInUseOnly] = useState(false)
   const [collapsedGroups, setCollapsedGroups] = useState(new Set())
-  const [gridMode, setGridMode] = useState('landscape')
+  const [gridMode, setGridMode] = useLocalStorage('raw-grid-mode', 'landscape')
   // per-mode column counts so each layout keeps its own density
-  const [gridCols, setGridCols] = useState({
+  const [gridCols, setGridCols] = useLocalStorage('raw-grid-cols', {
     landscape: 6,
     portrait: 8,
     natural: 6,

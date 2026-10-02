@@ -10,6 +10,7 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppData } from './AppDataContext'
 import { useUser } from './UserContext'
+import { useLocalStorage } from '../utils'
 
 // Everything scoped to the dataset workspace (/datasets/:name): the active
 // dataset, its batches/images/annotations, selection + marquee state, the
@@ -42,13 +43,19 @@ export function DatasetProvider({ children }) {
   const [confirmingRemoveDatasetBatch, setConfirmingRemoveDatasetBatch] = useState(false)
   const [datasetBatchToRemove, setDatasetBatchToRemove] = useState('')
   const [datasetSelectMode, setDatasetSelectMode] = useState(false)
-  const [datasetGridMode, setDatasetGridMode] = useState('landscape')
+  const [datasetGridMode, setDatasetGridMode] = useLocalStorage(
+    'dataset-grid-mode',
+    'landscape',
+  )
   // per-mode column counts so each layout keeps its own density
-  const [datasetGridCols, setDatasetGridCols] = useState({
-    landscape: 6,
-    portrait: 8,
-    natural: 6,
-  })
+  const [datasetGridCols, setDatasetGridCols] = useLocalStorage(
+    'dataset-grid-cols',
+    {
+      landscape: 6,
+      portrait: 8,
+      natural: 6,
+    },
+  )
   const [similarView, setSimilarView] = useState(null)
   const [similarLoading, setSimilarLoading] = useState(false)
   const [similarThreshold, setSimilarThreshold] = useState(6)
