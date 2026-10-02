@@ -9,6 +9,7 @@ import SourceModal from '../components/SourceModal'
 import UploadSourceModal from '../components/UploadSourceModal'
 import { ArchiveIcon } from '../components/icons'
 import { useAppData } from '../context/AppDataContext'
+import { GRID_COLS, GRID_COL_OPTIONS, MASONRY_COLS } from '../utils'
 
 const IMAGES_PER_PAGE = 50
 
@@ -44,6 +45,13 @@ export default function RawImagesPage() {
   const [batchFilter, setBatchFilter] = useState('')
   const [inUseOnly, setInUseOnly] = useState(false)
   const [collapsedGroups, setCollapsedGroups] = useState(new Set())
+  const [gridMode, setGridMode] = useState('landscape')
+  // per-mode column counts so each layout keeps its own density
+  const [gridCols, setGridCols] = useState({
+    landscape: 6,
+    portrait: 8,
+    natural: 6,
+  })
 
   const activeImages = selectedRawImages
 
@@ -292,7 +300,7 @@ export default function RawImagesPage() {
     : []
 
   return (
-    <section className="relative z-20 mt-6 flex min-w-0 gap-4">
+    <section className="relative z-20 mt-6 flex min-h-0 min-w-0 flex-1 gap-4">
       {/* ---- sidebar: sources → batches ---- */}
       <aside className="flex w-64 shrink-0 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
         <div className="flex items-center gap-2 border-b border-slate-200/70 p-3">
@@ -491,13 +499,14 @@ export default function RawImagesPage() {
       />
 
       {/* ---- main pane ---- */}
-      <div className="min-w-0 flex-1 rounded-2xl border border-white/60 bg-white/70 p-6 shadow-sm backdrop-blur-sm">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
         {!selectedRawInfo ? (
-          <div className="flex h-full min-h-[24rem] items-center justify-center rounded-xl border-2 border-dashed border-slate-300 text-sm text-slate-400">
+          <div className="m-6 flex flex-1 items-center justify-center rounded-xl border-2 border-dashed border-slate-300 text-sm text-slate-400">
             Select a batch on the left to browse its images
           </div>
         ) : (
           <>
+            <div className="shrink-0 p-6 pb-0">
             <div className="flex flex-wrap items-center gap-3">
               <h3 className="text-base font-semibold text-slate-800">
                 {selectedRaw}
@@ -534,17 +543,51 @@ export default function RawImagesPage() {
               </button>
             </div>
 
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
             {rawImagesLoading && activeImages.length === 0 ? (
               <div className="mt-4">
-                <SkeletonGrid count={12} />
+                <SkeletonGrid
+                  count={gridCols[gridMode] * 2}
+                  cols={GRID_COLS[gridCols[gridMode]]}
+                  aspect={
+                    gridMode === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'
+                  }
+                />
               </div>
-            ) : (
-              <div className="mt-4 grid grid-cols-6 gap-3">
-                {pageImages.map((image, index) => (
+            ) : gridMode === 'natural' ? (
+              <div className={`mt-4 gap-3 ${MASONRY_COLS[gridCols[gridMode]]}`}>
+                {pageImages.map((image) => (
                   <button
                     key={image.id ?? image}
                     type="button"
-                    onClick={() => setModalIndex(index)}
+                    onClick={() =>
+                      setModalIndex(activeImages.indexOf(image))
+                    }
+                    className="group relative mb-3 block w-full overflow-hidden rounded-lg shadow transition break-inside-avoid hover:shadow-lg"
+                  >
+                    <SkeletonImg
+                      src={`/api${image.path ?? image}`}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      className="w-full bg-slate-200 transition duration-150 group-hover:scale-105"
+                    />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div
+                className={`mt-4 grid gap-3 ${GRID_COLS[gridCols[gridMode]]}`}
+              >
+                {pageImages.map((image) => (
+                  <button
+                    key={image.id ?? image}
+                    type="button"
+                    onClick={() =>
+                      setModalIndex(activeImages.indexOf(image))
+                    }
                     className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
                   >
                     <SkeletonImg
@@ -552,7 +595,11 @@ export default function RawImagesPage() {
                       alt=""
                       loading="lazy"
                       decoding="async"
-                      className="aspect-video w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105"
+                      className={`w-full bg-slate-200 object-cover transition duration-150 group-hover:scale-105 ${
+                        gridMode === 'portrait'
+                          ? 'aspect-[9/16]'
+                          : 'aspect-video'
+                      }`}
                     />
                   </button>
                 ))}
@@ -563,8 +610,57 @@ export default function RawImagesPage() {
                 No images yet
               </div>
             )}
-            {pageCount > 1 && (
-              <div className="mt-5 flex items-center justify-center gap-3">
+            </div>
+            <div className="flex shrink-0 items-center gap-3 border-t border-slate-200/70 px-6 py-3">
+              <button
+                type="button"
+                onClick={() =>
+                  setGridMode((m) =>
+                    m === 'landscape'
+                      ? 'portrait'
+                      : m === 'portrait'
+                        ? 'natural'
+                        : 'landscape',
+                  )
+                }
+                title={`Grid: ${gridMode} — click to switch`}
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100"
+              >
+                {gridMode === 'landscape' ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="3" y="7" width="18" height="10" rx="1.5" />
+                  </svg>
+                ) : gridMode === 'portrait' ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="7" y="3" width="10" height="18" rx="1.5" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="3" y="4" width="8" height="9" rx="1" />
+                    <rect x="13" y="4" width="8" height="5" rx="1" />
+                    <rect x="3" y="15" width="8" height="5" rx="1" />
+                    <rect x="13" y="11" width="8" height="9" rx="1" />
+                  </svg>
+                )}
+              </button>
+              <select
+                value={gridCols[gridMode]}
+                onChange={(e) =>
+                  setGridCols((prev) => ({
+                    ...prev,
+                    [gridMode]: Number(e.target.value),
+                  }))
+                }
+                title="Columns"
+                className="h-8 rounded-full border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 outline-none transition hover:bg-slate-100"
+              >
+                {GRID_COL_OPTIONS.map((n) => (
+                  <option key={n} value={n}>
+                    {n} col
+                  </option>
+                ))}
+              </select>
+              <div className="ml-auto flex items-center gap-3">
                 <button
                   type="button"
                   onClick={() => setImagePage((p) => Math.max(0, p - 1))}
@@ -587,7 +683,7 @@ export default function RawImagesPage() {
                   Next →
                 </button>
               </div>
-            )}
+            </div>
           </>
         )}
       </div>

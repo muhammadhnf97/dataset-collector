@@ -47,8 +47,8 @@ function App() {
   }, [])
 
   return (
-    <div className="flex min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-indigo-50">
-      <main className="min-w-0 flex-1 p-8">
+    <div className="flex h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-indigo-50">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-8">
         <header className="flex items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-800">
