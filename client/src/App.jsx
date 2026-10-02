@@ -137,6 +137,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/raw-images" replace />} />
           <Route path="/raw-images" element={<RawImagesPage />} />
+          <Route path="/raw-images/:batch" element={<RawImagesPage />} />
           <Route path="/datasets" element={<DatasetsPage />} />
           <Route path="/datasets/:name" element={<DatasetWorkspace />} />
           <Route path="/archives" element={<ArchivesPage />} />

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-export default function ConfirmModal({ count, onCancel, onConfirm, title, message, confirmLabel = 'Delete', danger = true }) {
+export default function ConfirmModal({ count, onCancel, onConfirm, title, message, details, confirmLabel = 'Delete', danger = true }) {
   const confirmRef = useRef(null)
   const onConfirmRef = useRef(onConfirm)
   const onCancelRef = useRef(onCancel)
@@ -62,6 +62,11 @@ export default function ConfirmModal({ count, onCancel, onConfirm, title, messag
           {message ??
             'This will permanently remove the marked images. This action cannot be undone.'}
         </p>
+        {details && (
+          <div className="mt-3 max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-white/5 p-3 text-left text-xs text-slate-300">
+            {details}
+          </div>
+        )}
         <div className="mt-5 flex gap-2">
           <button
             type="button"
