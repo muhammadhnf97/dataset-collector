@@ -419,8 +419,9 @@ export default function DatasetWorkspace() {
           </div>
         </div>
 
+        <div className="relative min-h-0 flex-1">
         {toolbarOpen && datasetBatches.length > 0 && (
-          <div className="flex shrink-0 flex-wrap items-center gap-3 border-y border-slate-200/70 bg-slate-50/60 px-5 py-2">
+          <div className="absolute inset-x-0 top-0 z-30 flex flex-wrap items-center gap-3 border-b border-slate-200/70 bg-white/95 px-5 py-2 shadow-lg shadow-slate-900/10 backdrop-blur-sm">
             <div ref={batchMenuRef} className="relative">
               {(() => {
                 const current = datasetBatchFilter ?? datasetBatches[0] ?? ''
@@ -800,7 +801,7 @@ export default function DatasetWorkspace() {
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="h-full overflow-y-auto">
         <div
           ref={datasetGridRef}
           className={`relative px-6 py-5 ${datasetSelectMode || similarView ? 'select-none' : ''}`}
@@ -864,6 +865,7 @@ export default function DatasetWorkspace() {
             />
           ))
         )}
+        </div>
         </div>
         </div>
       </section>
