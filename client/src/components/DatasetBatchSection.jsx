@@ -11,7 +11,6 @@ import {
 export default function DatasetBatchSection({
   dataset,
   stem,
-  source,
   stats,
   images,
   annotations,
@@ -33,7 +32,6 @@ export default function DatasetBatchSection({
   const sentinelRef = useRef(null)
   const batchName = stem.replace(/^raw-images_/, '')
   const total = stats?.total ?? 0
-  const annotated = stats?.annotated ?? 0
   const hasMore = loadedCount < total
 
   const loadPage = async (page, replace) => {
@@ -81,17 +79,7 @@ export default function DatasetBatchSection({
 
   return (
     <div className="mt-4">
-      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-700">
-        {stem}
-        {source && (
-          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-600">
-            {source.name} · v{source.version}
-          </span>
-        )}
-        <span className="text-xs font-normal text-slate-400">
-          {annotated} / {total} annotated
-        </span>
-      </h3>
+
       {loadedCount === 0 && loading ? (
         <SkeletonGrid
           count={cols * 2}

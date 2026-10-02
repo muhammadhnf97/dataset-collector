@@ -20,6 +20,7 @@ import {
   formatRelativeTime,
   mergeReviewerMaps,
   sortedReviewers,
+  useLocalStorage,
 } from '../utils'
 
 export default function DatasetWorkspace() {
@@ -39,6 +40,7 @@ export default function DatasetWorkspace() {
   } = useAppData()
   const { currentUser, requireUser } = useUser()
   const ds = useDataset()
+  const [toolbarOpen, setToolbarOpen] = useLocalStorage('dataset-toolbar-open', true)
 
   const {
     datasetName,
@@ -204,6 +206,79 @@ export default function DatasetWorkspace() {
           <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
             {datasetTotals.annotated} / {datasetTotals.total} annotated
           </span>
+          {datasetBatches.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  setDatasetGridMode((m) =>
+                    m === 'landscape'
+                      ? 'portrait'
+                      : m === 'portrait'
+                        ? 'natural'
+                        : 'landscape',
+                  )
+                }
+                title={`Grid: ${datasetGridMode} — click to switch`}
+                className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100"
+              >
+                {datasetGridMode === 'landscape' ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="3" y="7" width="18" height="10" rx="1.5" />
+                  </svg>
+                ) : datasetGridMode === 'portrait' ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="7" y="3" width="10" height="18" rx="1.5" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="3" y="4" width="8" height="9" rx="1" />
+                    <rect x="13" y="4" width="8" height="5" rx="1" />
+                    <rect x="3" y="15" width="8" height="5" rx="1" />
+                    <rect x="13" y="11" width="8" height="9" rx="1" />
+                  </svg>
+                )}
+              </button>
+              <select
+                value={datasetGridCols[datasetGridMode]}
+                onChange={(e) =>
+                  setDatasetGridCols((prev) => ({
+                    ...prev,
+                    [datasetGridMode]: Number(e.target.value),
+                  }))
+                }
+                title="Columns"
+                className="h-7 rounded-full border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 outline-none transition hover:bg-slate-100"
+              >
+                {GRID_COL_OPTIONS.map((n) => (
+                  <option key={n} value={n}>
+                    {n} col
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setToolbarOpen((v) => !v)}
+                title={toolbarOpen ? 'Hide batch toolbar' : 'Show batch toolbar'}
+                className={`flex h-7 w-7 items-center justify-center rounded-full border transition ${
+                  toolbarOpen
+                    ? 'border-indigo-300 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                    : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <svg
+                  className={`h-3.5 w-3.5 transition-transform ${toolbarOpen ? '' : 'rotate-180'}`}
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth={2}
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+                </svg>
+              </button>
+            </>
+          )}
           <div className="ml-auto flex items-center gap-2">
             <div ref={batchActionsMenuRef} className="relative">
               <button
@@ -344,7 +419,7 @@ export default function DatasetWorkspace() {
           </div>
         </div>
 
-        {datasetBatches.length > 0 && (
+        {toolbarOpen && datasetBatches.length > 0 && (
           <div className="flex shrink-0 flex-wrap items-center gap-3 border-y border-slate-200/70 bg-slate-50/60 px-5 py-2">
             <div ref={batchMenuRef} className="relative">
               {(() => {
@@ -521,54 +596,6 @@ export default function DatasetWorkspace() {
               )
             })()}
             <div className="h-5 w-px bg-slate-300" />
-            <button
-              type="button"
-              onClick={() =>
-                setDatasetGridMode((m) =>
-                  m === 'landscape'
-                    ? 'portrait'
-                    : m === 'portrait'
-                      ? 'natural'
-                      : 'landscape',
-                )
-              }
-              title={`Grid: ${datasetGridMode} — click to switch`}
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100"
-            >
-              {datasetGridMode === 'landscape' ? (
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <rect x="3" y="7" width="18" height="10" rx="1.5" />
-                </svg>
-              ) : datasetGridMode === 'portrait' ? (
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <rect x="7" y="3" width="10" height="18" rx="1.5" />
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <rect x="3" y="4" width="8" height="9" rx="1" />
-                  <rect x="13" y="4" width="8" height="5" rx="1" />
-                  <rect x="3" y="15" width="8" height="5" rx="1" />
-                  <rect x="13" y="11" width="8" height="9" rx="1" />
-                </svg>
-              )}
-            </button>
-            <select
-              value={datasetGridCols[datasetGridMode]}
-              onChange={(e) =>
-                setDatasetGridCols((prev) => ({
-                  ...prev,
-                  [datasetGridMode]: Number(e.target.value),
-                }))
-              }
-              title="Columns"
-              className="h-8 rounded-full border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 outline-none transition hover:bg-slate-100"
-            >
-              {GRID_COL_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n} col
-                </option>
-              ))}
-            </select>
             <div className="ml-auto flex items-center gap-2">
               <div ref={prelabelMenuRef} className="relative">
                 <div className="flex overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
@@ -819,7 +846,6 @@ export default function DatasetWorkspace() {
               key={`${stem}-${datasetRefreshKey}`}
               dataset={activeDataset}
               stem={stem}
-              source={datasetBatchSources[stem]}
               stats={datasetBatchStats[stem]}
               images={datasetImageGroups[stem] ?? []}
               annotations={datasetAnnotations}
