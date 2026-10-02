@@ -110,6 +110,8 @@ export function DatasetProvider({ children }) {
   const handlersMenuRef = useRef(null)
   const [batchMenuOpen, setBatchMenuOpen] = useState(false)
   const batchMenuRef = useRef(null)
+  const [batchActionsMenuOpen, setBatchActionsMenuOpen] = useState(false)
+  const batchActionsMenuRef = useRef(null)
   const [archiveFormat, setArchiveFormat] = useState('tar')
   const [archiving, setArchiving] = useState(false)
   const [datasetBatchSources, setDatasetBatchSources] = useState({})
@@ -1153,7 +1155,13 @@ export function DatasetProvider({ children }) {
   }, [attrMenuOpen])
 
   useEffect(() => {
-    if (!exportMenuOpen && !handlersMenuOpen && !batchMenuOpen) return
+    if (
+      !exportMenuOpen &&
+      !handlersMenuOpen &&
+      !batchMenuOpen &&
+      !batchActionsMenuOpen
+    )
+      return
     const handleClick = (e) => {
       if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
         setExportMenuOpen(false)
@@ -1167,10 +1175,16 @@ export function DatasetProvider({ children }) {
       if (batchMenuRef.current && !batchMenuRef.current.contains(e.target)) {
         setBatchMenuOpen(false)
       }
+      if (
+        batchActionsMenuRef.current &&
+        !batchActionsMenuRef.current.contains(e.target)
+      ) {
+        setBatchActionsMenuOpen(false)
+      }
     }
     window.addEventListener('mousedown', handleClick)
     return () => window.removeEventListener('mousedown', handleClick)
-  }, [exportMenuOpen, handlersMenuOpen, batchMenuOpen])
+  }, [exportMenuOpen, handlersMenuOpen, batchMenuOpen, batchActionsMenuOpen])
 
   useEffect(() => {
     if (datasetBatches.length > 0 && !datasetBatches.includes(datasetBatchFilter)) {
@@ -1329,6 +1343,9 @@ export function DatasetProvider({ children }) {
     batchMenuOpen,
     setBatchMenuOpen,
     batchMenuRef,
+    batchActionsMenuOpen,
+    setBatchActionsMenuOpen,
+    batchActionsMenuRef,
     archiveFormat,
     setArchiveFormat,
     archiving,
