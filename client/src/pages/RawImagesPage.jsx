@@ -302,7 +302,7 @@ export default function RawImagesPage() {
   return (
     <section className="relative z-20 mt-6 flex min-h-0 min-w-0 flex-1 gap-4">
       {/* ---- sidebar: sources → batches ---- */}
-      <aside className="flex w-64 shrink-0 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
+      <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
         <div className="flex items-center gap-2 border-b border-slate-200/70 p-3">
           <h2 className="text-sm font-semibold text-slate-800">Raw Images</h2>
           <span className="rounded-full bg-slate-200/80 px-2 py-0.5 text-[10px] font-medium text-slate-600">

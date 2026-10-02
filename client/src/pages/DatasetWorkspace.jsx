@@ -4,6 +4,7 @@ import BatchWarnModal from '../components/BatchWarnModal'
 import ConfirmModal from '../components/ConfirmModal'
 import DatasetBatchSection from '../components/DatasetBatchSection'
 import DatasetSettingsModal from '../components/DatasetSettingsModal'
+import SkeletonGrid from '../components/SkeletonGrid'
 import DatasetSimilarView from '../components/DatasetSimilarView'
 import ExportDatasetModal from '../components/ExportDatasetModal'
 import ImageModal from '../components/ImageModal'
@@ -17,6 +18,7 @@ import { useDataset } from '../context/DatasetContext'
 import { useUser } from '../context/UserContext'
 import {
   GRID_COL_OPTIONS,
+  GRID_COLS,
   formatRelativeTime,
   mergeReviewerMaps,
   sortedReviewers,
@@ -46,6 +48,7 @@ export default function DatasetWorkspace() {
     datasetName,
     activeDataset,
     datasetBatches,
+    datasetLoading,
     datasetImageGroups,
     datasetAnnotations,
     datasetAnnotationTimes,
@@ -837,6 +840,14 @@ export default function DatasetWorkspace() {
             attributes={datasetAttributes}
             lastEdited={lastEditedImage}
           />
+        ) : datasetLoading ? (
+          <div className="mt-4">
+            <SkeletonGrid
+              count={datasetGridCols[datasetGridMode] * 3}
+              cols={GRID_COLS[datasetGridCols[datasetGridMode]]}
+              aspect={datasetGridMode === 'portrait' ? 'aspect-[9/16]' : 'aspect-video'}
+            />
+          </div>
         ) : visibleStems.length === 0 ? (
           <div className="mt-4 flex items-center justify-center rounded-xl border-2 border-dashed border-slate-300 py-10 text-sm text-slate-400">
             No images in this dataset

@@ -66,6 +66,7 @@ export function DatasetProvider({ children }) {
   const [confirmingRemoveActiveDataset, setConfirmingRemoveActiveDataset] = useState(false)
   const [activeDataset, setActiveDataset] = useState('')
   const [datasetBatches, setDatasetBatches] = useState([])
+  const [datasetLoading, setDatasetLoading] = useState(false)
   const [datasetImageGroups, setDatasetImageGroups] = useState({})
   const [datasetAnnotations, setDatasetAnnotations] = useState({})
   const [datasetAnnotationTimes, setDatasetAnnotationTimes] = useState({})
@@ -213,6 +214,7 @@ export function DatasetProvider({ children }) {
   }
 
   const refreshDataset = async (name) => {
+    setDatasetLoading(true)
     try {
       const [datasetRes, imagesRes, annotRes, handlersRes] = await Promise.all([
         fetch(`/api/datasets/${encodeURIComponent(name)}`),
@@ -252,6 +254,8 @@ export function DatasetProvider({ children }) {
       }
     } catch {
       setStatus('Failed: could not reach the server')
+    } finally {
+      setDatasetLoading(false)
     }
   }
 
@@ -1289,6 +1293,7 @@ export function DatasetProvider({ children }) {
     datasetName,
     activeDataset,
     datasetBatches,
+    datasetLoading,
     datasetImageGroups,
     datasetAnnotations,
     datasetAnnotationTimes,

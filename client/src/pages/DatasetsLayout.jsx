@@ -12,8 +12,10 @@ import { formatRelativeTime } from '../utils'
 
 export function DatasetsEmptyState() {
   return (
-    <div className="flex min-h-[24rem] items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-white/40 text-sm text-slate-400">
-      Select a dataset on the left to open its workspace
+    <div className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/70 shadow-sm backdrop-blur-sm">
+      <div className="m-6 flex flex-1 items-center justify-center rounded-xl border-2 border-dashed border-slate-300 text-sm text-slate-400">
+        Select a dataset on the left to open its workspace
+      </div>
     </div>
   )
 }
