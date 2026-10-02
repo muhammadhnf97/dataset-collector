@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import DatasetImageThumb from './DatasetImageThumb'
 import SkeletonGrid from './SkeletonGrid'
 import {
@@ -30,6 +30,7 @@ export default function DatasetBatchSection({
 }) {
   const [loading, setLoading] = useState(true)
   const [loadedCount, setLoadedCount] = useState(0)
+  const sentinelRef = useRef(null)
   const batchName = stem.replace(/^raw-images_/, '')
   const total = stats?.total ?? 0
   const annotated = stats?.annotated ?? 0
@@ -60,6 +61,23 @@ export default function DatasetBatchSection({
     loadPage(0, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset, stem, refreshKey])
+
+  // auto-load next page when the sentinel scrolls near the viewport
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el || !hasMore || loading) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadPage(Math.floor(loadedCount / DATASET_PAGE_LIMIT), false)
+        }
+      },
+      { rootMargin: '400px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, loading, loadedCount])
 
   return (
     <div className="mt-4">
@@ -121,16 +139,22 @@ export default function DatasetBatchSection({
         </div>
       )}
       {hasMore && (
-        <button
-          type="button"
-          onClick={() => loadPage(Math.floor(loadedCount / DATASET_PAGE_LIMIT), false)}
-          disabled={loading}
-          className="mt-3 rounded-lg border border-slate-300 bg-white px-4 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-40"
+        <div
+          ref={sentinelRef}
+          onClick={() =>
+            !loading &&
+            loadPage(Math.floor(loadedCount / DATASET_PAGE_LIMIT), false)
+          }
+          title="Click to load more"
+          className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-slate-400 transition hover:text-slate-600"
         >
+          {loading && (
+            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-500" />
+          )}
           {loading
-            ? 'Loading...'
-            : `Load more (${loadedCount} / ${total})`}
-        </button>
+            ? 'Loading more...'
+            : `${loadedCount} / ${total} — scroll for more`}
+        </div>
       )}
     </div>
   )
