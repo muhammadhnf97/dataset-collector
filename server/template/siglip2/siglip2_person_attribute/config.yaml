@@ -1,0 +1,69 @@
+framework-name: "SigLIP2"
+model-name: "siglip2_person_attribute"
+pre-label-model: "model/siglip2_person_attribute"
+model-annotation: "text"
+attributes:
+  - name: Head
+    alias: Kepala
+    type: single
+    indices: [0, 1, 2]
+    options: [None, Hijab, Cap]
+    option_aliases: ['None', 'Hijab', 'Topi']
+  - name: Upper
+    alias: Atasan
+    type: single
+    indices: [3, 4, 5, 6, 7, 8]
+    options: [TShirt, Shirt, Blouse, Hoodie, Sweater, Jacket]
+    option_aliases: ['Kaos', 'Kemeja', 'Blus', 'Hoodie', 'Sweater', 'Jaket']
+  - name: Sleeve
+    alias: Lengan
+    type: single
+    indices: [9, 10]
+    options: [Short, Long]
+    option_aliases: ['Pendek', 'Panjang']
+  - name: Lower
+    alias: Bawahan
+    type: single
+    indices: [11, 12, 13, 14]
+    options: [Pants, Jeans, Skirt, Shorts]
+    option_aliases: ['Celana Panjang', 'Jeans', 'Rok', 'Celana Pendek']
+  - name: Bag
+    alias: Tas
+    type: single
+    indices: [15, 16, 17, 18]
+    options: [None, Handbag, Backpack, Sling]
+    option_aliases: ['None', 'Tas Tangan', 'Ransel', 'Tas Selempang']
+  - name: Shoes
+    alias: Sepatu
+    type: single
+    indices: [19, 20, 21]
+    options: [Sneakers, Sandals, Formal]
+    option_aliases: ['Sneakers', 'Sandal', 'Formal']
+  - name: View
+    alias: Arah
+    type: single
+    indices: [22, 23, 24, 25]
+    options: [Front, Side, Back, Unknown]
+    option_aliases: ['Depan', 'Samping', 'Belakang', 'Tidak Jelas']
+  - name: Age
+    alias: Usia
+    type: single
+    indices: [26, 27]
+    options: [Kid, Adult]
+    option_aliases: ['Anak', 'Dewasa']
+  - name: Gender
+    alias: Jenis Kelamin
+    type: single
+    indices: [28, 29, 30]
+    options: [Male, Female, Unknown]
+    option_aliases: ['Laki-laki', 'Perempuan', 'Tidak Jelas']
+text-format: "path/filename.jpg	1,0,0,0,1,0,0,0,0,0,1,1,0,0,0,0,0,1,0,1,0,0,1,0,0,0,0,1,0,1,0"
+folder:
+  structure:
+    - train
+    - val
+    - test
+  ratio:
+    train: 0.8
+    val: 0.1
+    test: 0.1
