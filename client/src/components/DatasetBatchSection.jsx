@@ -30,11 +30,16 @@ export default function DatasetBatchSection({
   const [loading, setLoading] = useState(true)
   const [loadedCount, setLoadedCount] = useState(0)
   const sentinelRef = useRef(null)
+  // synchronous guard — `loading` state applies only after re-render, so the
+  // IntersectionObserver can fire again in the gap and double-append a page
+  const inFlightRef = useRef(false)
   const batchName = stem.replace(/^raw-images_/, '')
   const total = stats?.total ?? 0
   const hasMore = loadedCount < total
 
   const loadPage = async (page, replace) => {
+    if (inFlightRef.current && !replace) return
+    inFlightRef.current = true
     setLoading(true)
     try {
       const response = await fetch(
@@ -42,14 +47,15 @@ export default function DatasetBatchSection({
       )
       const data = await response.json()
       if (response.ok) {
-        setLoadedCount(
-          replace ? data.images.length : loadedCount + data.images.length,
+        setLoadedCount((prev) =>
+          replace ? data.images.length : prev + data.images.length,
         )
         onImagesLoaded(stem, data.images, replace)
       }
     } catch {
       // leave existing images; user can retry with Load more
     } finally {
+      inFlightRef.current = false
       setLoading(false)
     }
   }

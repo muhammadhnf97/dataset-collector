@@ -199,10 +199,18 @@ export function DatasetProvider({ children }) {
   }, [activeDataset, datasetBatchFilter, currentUser])
 
   const handleDatasetImagesLoaded = (stem, images, replace) => {
-    setDatasetImageGroups((prev) => ({
-      ...prev,
-      [stem]: replace ? images : [...(prev[stem] ?? []), ...images],
-    }))
+    setDatasetImageGroups((prev) => {
+      const existing = replace ? [] : (prev[stem] ?? [])
+      const seen = new Set(existing)
+      const merged = [...existing]
+      for (const src of images) {
+        if (!seen.has(src)) {
+          seen.add(src)
+          merged.push(src)
+        }
+      }
+      return { ...prev, [stem]: merged }
+    })
   }
 
   const navigateDatasetModal = (delta) => {
