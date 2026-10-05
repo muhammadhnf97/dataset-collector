@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import ConfirmModal from '../components/ConfirmModal'
 import CreateDatasetModal from '../components/CreateDatasetModal'
@@ -54,6 +54,51 @@ export default function DatasetsLayout() {
   const [creatingDataset, setCreatingDataset] = useState(false)
   const [newDatasetMenuOpen, setNewDatasetMenuOpen] = useState(false)
   const newDatasetMenuRef = useRef(null)
+  const [datasetFilter, setDatasetFilter] = useState('')
+  const [collapsedGroups, setCollapsedGroups] = useState(new Set())
+
+  // group datasets by their template (framework/model), like Raw Images
+  // groups batches by source; datasets without a template land in "No template"
+  const datasetGroups = useMemo(() => {
+    const needle = datasetFilter.trim().toLowerCase()
+    const groups = []
+    const byKey = {}
+    for (const d of datasets) {
+      const label = d.framework
+        ? `${d.framework}${d.model ? ` / ${d.model}` : ''}`
+        : 'No template'
+      if (
+        needle &&
+        !d.name.toLowerCase().includes(needle) &&
+        !label.toLowerCase().includes(needle)
+      ) {
+        continue
+      }
+      const key = d.framework ? `t-${label}` : 'untagged'
+      if (!byKey[key]) {
+        byKey[key] = { key, label, items: [] }
+        groups.push(byKey[key])
+      }
+      byKey[key].items.push(d)
+    }
+    groups.sort((a, b) => {
+      if (a.key === 'untagged') return 1
+      if (b.key === 'untagged') return -1
+      return a.label.localeCompare(b.label)
+    })
+    for (const g of groups) {
+      g.items.sort((a, b) => a.name.localeCompare(b.name))
+    }
+    return groups
+  }, [datasets, datasetFilter])
+
+  const toggleGroup = (key) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
 
   useEffect(() => {
     if (!newDatasetMenuOpen) return
@@ -189,8 +234,47 @@ export default function DatasetsLayout() {
               {datasets.length}
             </span>
           </div>
+          <div className="border-b border-slate-200/70 p-2">
+            <input
+              type="text"
+              value={datasetFilter}
+              onChange={(e) => setDatasetFilter(e.target.value)}
+              placeholder="Filter datasets..."
+              className="w-full min-w-0 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400"
+            />
+          </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
-            {datasets.map((d) => {
+            {datasetGroups.map((group) => {
+              const collapsed = collapsedGroups.has(group.key)
+              return (
+                <div key={group.key} className="mb-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.key)}
+                    className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs font-semibold text-slate-600 transition hover:bg-slate-100"
+                  >
+                    <span
+                      className={`text-[9px] text-slate-400 transition-transform ${
+                        collapsed ? '-rotate-90' : ''
+                      }`}
+                    >
+                      ▼
+                    </span>
+                    <span
+                      className={
+                        group.key === 'untagged'
+                          ? 'text-slate-400'
+                          : 'text-indigo-600'
+                      }
+                    >
+                      {group.label}
+                    </span>
+                    <span className="ml-auto text-[10px] font-normal text-slate-400">
+                      {group.items.length}
+                    </span>
+                  </button>
+                  {!collapsed &&
+                    group.items.map((d) => {
               const active = activeDataset === d.name
               const checkedRemove = selectedDatasetsToRemove.has(d.name)
               const checkedExport = selectedDatasetsToExport.has(d.name)
@@ -261,27 +345,28 @@ export default function DatasetsLayout() {
                       {d.name}
                     </p>
                     <p className="truncate text-[10px] text-slate-400">
-                      {d.framework
-                        ? `${d.framework}${d.model ? ` / ${d.model}` : ''}`
-                        : 'No framework'}
-                      {' · '}
                       {d.batches?.length ?? 0} batch
                       {(d.batches?.length ?? 0) === 1 ? '' : 'es'}
+                      {d.last_annotated_at && (
+                        <> · Updated {formatRelativeTime(d.last_annotated_at)}</>
+                      )}
                     </p>
-                    {d.last_annotated_at && (
-                      <p className="truncate text-[10px] text-slate-400">
-                        Updated {formatRelativeTime(d.last_annotated_at)}
-                      </p>
-                    )}
                   </div>
+                </div>
+                    )
+                  })}
                 </div>
               )
             })}
-            {datasets.length === 0 && (
+            {datasets.length === 0 ? (
               <div className="py-10 text-center text-xs text-slate-400">
                 No datasets yet — assign a batch to create one
               </div>
-            )}
+            ) : datasetGroups.length === 0 ? (
+              <div className="py-10 text-center text-xs text-slate-400">
+                No datasets match the filter
+              </div>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200/70 p-2">
             {removeDatasetMode ? (
