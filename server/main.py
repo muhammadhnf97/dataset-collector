@@ -2345,6 +2345,10 @@ def export_dataset(name: str, payload: dict | None = None):
         shutil.rmtree(export_dir)
     export_dir.mkdir(parents=True)
 
+    template_config_path = TEMPLATES_DIR / _normalize_template_path(framework, model) / "config.yaml"
+    if template_config_path.is_file():
+        shutil.copy2(template_config_path, export_dir / "config.yaml")
+
     export_cfg = config.get("export") or {}
     jsonl_layout = export_cfg.get("layout") == "metadata_jsonl"
     jsonl_dirs = {"train": "train", "val": "validation", "test": "test"}
