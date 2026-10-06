@@ -851,7 +851,12 @@ def _list_template_models(template_name: str):
     return sorted(
         f"model/{d.name}"
         for d in model_root.iterdir()
-        if d.is_dir() and (d / "inference.pdmodel").exists()
+        if d.is_dir()
+        and (
+            (d / "inference.pdmodel").exists()
+            or (d / "best.pt").exists()
+            or (d / "last.pt").exists()
+        )
     )
 
 
@@ -1082,18 +1087,6 @@ def update_dataset_settings(name: str, payload: dict):
     if not new_name:
         raise HTTPException(status_code=400, detail="Dataset name is required")
 
-    framework = ""
-    model = ""
-    if template:
-        config = load_template_config(template)
-        framework = (config.get("framework-name") or "").strip()
-        model = (config.get("model-name") or "").strip()
-    if not framework or not model:
-        framework = (payload.get("framework") or "").strip()
-        model = (payload.get("model") or "").strip()
-    if not framework or not model:
-        raise HTTPException(status_code=400, detail="Model template is required")
-
     db = SessionLocal()
     try:
         ds = db.query(DbDataset).filter_by(name=name).first()
@@ -1102,8 +1095,15 @@ def update_dataset_settings(name: str, payload: dict):
         if new_name != name and db.query(DbDataset).filter_by(name=new_name).first():
             raise HTTPException(status_code=400, detail="Dataset name already exists")
         ds.name = new_name
-        ds.framework = framework
-        ds.model = model
+        # template is set-once: only assignable while the dataset has none,
+        # because switching it would corrupt existing annotations' label space
+        if not ds.framework or not ds.model:
+            if template:
+                config = load_template_config(template)
+                ds.framework = (config.get("framework-name") or "").strip()
+                ds.model = (config.get("model-name") or "").strip()
+        framework = ds.framework
+        model = ds.model
         dir_name = ds.dir_name
         db.commit()
     finally:
@@ -1119,6 +1119,81 @@ def update_dataset_settings(name: str, payload: dict):
         json.dump(manifest, f)
 
     return {"dataset": new_name, "framework": framework, "model": model}
+
+
+@app.post("/datasets/{name:path}/clone")
+def clone_dataset(name: str, payload: dict):
+    from urllib.parse import unquote
+    name = unquote(name)
+    new_name = (payload.get("name") or "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Dataset name is required")
+    include_template = bool(payload.get("include_template", True))
+    include_annotations = bool(payload.get("include_annotations", True))
+
+    with DATASETS_LOCK:
+        db = SessionLocal()
+        try:
+            src = db.query(DbDataset).filter_by(name=name).first()
+            if not src:
+                raise HTTPException(status_code=404, detail="Dataset not found")
+            if db.query(DbDataset).filter_by(name=new_name).first():
+                raise HTTPException(status_code=400, detail="Dataset already exists")
+
+            dataset_dir_name = next_dataset_dir_name()
+            (DATASETS_DIR / dataset_dir_name).mkdir(parents=True, exist_ok=True)
+            ds = DbDataset(
+                name=new_name,
+                dir_name=dataset_dir_name,
+                framework=src.framework if include_template else None,
+                model=src.model if include_template else None,
+                split=dict(src.split or DEFAULT_SPLIT),
+            )
+            db.add(ds)
+            db.flush()
+
+            images = 0
+            for di in db.query(DbDatasetImage).filter_by(dataset_id=src.id).all():
+                db.add(
+                    DbDatasetImage(
+                        dataset_id=ds.id,
+                        image_id=di.image_id,
+                        batch_id=di.batch_id,
+                    )
+                )
+                images += 1
+
+            annotations = 0
+            if include_template and include_annotations:
+                for a in db.query(DbAnnotation).filter_by(dataset_id=src.id).all():
+                    db.add(
+                        DbAnnotation(
+                            dataset_id=ds.id,
+                            image_id=a.image_id,
+                            values=a.values,
+                            pre_labels=a.pre_labels,
+                            last_attr=a.last_attr,
+                            created_by=a.created_by,
+                            updated_by=a.updated_by,
+                        )
+                    )
+                    annotations += 1
+            framework = ds.framework or ""
+            model = ds.model or ""
+            db.commit()
+        finally:
+            db.close()
+
+    manifest = {
+        "name": new_name,
+        "framework": framework,
+        "model": model,
+    }
+    manifest_path = DATASETS_DIR / dataset_dir_name / "manifest.json"
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f)
+
+    return {"dataset": new_name, "images": images, "annotations": annotations}
 
 
 def _create_prelabel_predictor(model_dir: Path):
@@ -1258,7 +1333,19 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
     # (bumping updated_at/updated_by) even though their content is unchanged.
     processed = {}
     count = 0
-    model_parts = _create_prelabel_predictor(model_dir)
+    is_siglip2_checkpoint = (model_dir / "best.pt").exists() or (model_dir / "last.pt").exists()
+    if is_siglip2_checkpoint:
+        import siglip2_infer
+
+        try:
+            model_parts = siglip2_infer.load_predictor(model_dir)
+        except (FileNotFoundError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        attr_groups = config.get("attributes", [])
+        predict_fn = lambda img_path: siglip2_infer.predict_values(img_path, model_parts, attr_groups)
+    else:
+        model_parts = _create_prelabel_predictor(model_dir)
+        predict_fn = lambda img_path: _prelabel_image(img_path, model_parts)
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
@@ -1279,7 +1366,7 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
                     or not img_path.is_relative_to(UPLOADS_DIR.resolve())
                 ):
                     continue
-                values = _prelabel_image(img_path, model_parts)
+                values = predict_fn(img_path)
                 processed[db_image.path] = values
                 count += 1
     finally:
@@ -1485,18 +1572,21 @@ def remove_dataset_batch(name: str, batch: str):
     if not dir_name:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    display = batch.replace("_", "/")
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
         if not db_dataset:
             raise HTTPException(status_code=404, detail="Dataset not found")
 
-        if display.startswith("raw-images/") and len(Path(display).parts) > 1:
-            batch_name = Path(display).name
-            db_batch = db.query(DbBatch).filter_by(name=batch_name).first()
+        # stems look like "raw-images_<name>" — strip the prefix only;
+        # replacing every "_" corrupts names containing underscores
+        if batch.startswith("raw-images_"):
+            batch_name = batch[len("raw-images_"):]
+        elif batch.startswith("raw-images/"):
+            batch_name = batch.split("/", 1)[1]
         else:
-            db_batch = db.query(DbBatch).filter_by(name=display).first()
+            batch_name = batch
+        db_batch = db.query(DbBatch).filter_by(name=batch_name).first()
 
         if not db_batch:
             raise HTTPException(status_code=404, detail="Batch not found")
@@ -2255,18 +2345,32 @@ def export_dataset(name: str, payload: dict | None = None):
         shutil.rmtree(export_dir)
     export_dir.mkdir(parents=True)
 
+    export_cfg = config.get("export") or {}
+    jsonl_layout = export_cfg.get("layout") == "metadata_jsonl"
+    jsonl_dirs = {"train": "train", "val": "validation", "test": "test"}
+    jsonl_offsets = {"train": 0, "val": 10000, "test": 20000}
+
     counts = {}
     missing_annotations = 0
     for split_name, split_list in split_files.items():
-        folder_name = folder_map.get(split_name, split_name)
+        folder_name = (
+            jsonl_dirs.get(split_name, split_name)
+            if jsonl_layout
+            else folder_map.get(split_name, split_name)
+        )
         text_name = text_map.get(split_name, f"{split_name}_list.txt")
         target_dir = export_dir / folder_name
         target_dir.mkdir(parents=True, exist_ok=True)
         lines = []
-        for f in split_list:
-            dest = target_dir / f.name
-            if dest.exists():
-                dest = target_dir / f"{uuid.uuid4().hex[:8]}_{f.name}"
+        for i, f in enumerate(split_list, start=1):
+            if jsonl_layout:
+                dest = target_dir / (
+                    f"{jsonl_offsets.get(split_name, 0) + i:06d}{f.suffix.lower()}"
+                )
+            else:
+                dest = target_dir / f.name
+                if dest.exists():
+                    dest = target_dir / f"{uuid.uuid4().hex[:8]}_{f.name}"
             shutil.copy2(f, dest)
             rel = f.relative_to(UPLOADS_DIR)
             source_url = f"/uploads/{rel.as_posix()}"
@@ -2277,11 +2381,33 @@ def export_dataset(name: str, payload: dict | None = None):
                 values = values + [0] * (vector_length - len(values))
             elif len(values) > vector_length:
                 values = values[:vector_length]
-            label = ",".join(str(v) for v in values)
-            lines.append(f"{folder_name}/{dest.name}\t{label}")
-        (export_dir / text_name).write_text(
-            "\n".join(lines) + ("\n" if lines else "")
-        )
+            if jsonl_layout:
+                record = {"file_name": dest.name}
+                for group in attr_groups:
+                    options = group.get("options") or []
+                    selected = next(
+                        (
+                            options[j]
+                            for j, idx in enumerate(group.get("indices") or [])
+                            if idx < len(values) and values[idx] == 1
+                        ),
+                        None,
+                    )
+                    record[str(group.get("name", "")).lower()] = (
+                        selected.lower() if isinstance(selected, str) else None
+                    )
+                lines.append(json.dumps(record, ensure_ascii=False))
+            else:
+                label = ",".join(str(v) for v in values)
+                lines.append(f"{folder_name}/{dest.name}\t{label}")
+        if jsonl_layout:
+            (target_dir / "metadata.jsonl").write_text(
+                "\n".join(lines) + ("\n" if lines else "")
+            )
+        else:
+            (export_dir / text_name).write_text(
+                "\n".join(lines) + ("\n" if lines else "")
+            )
         counts[split_name] = len(split_list)
 
     export_format = (payload.get("format") or "tar").strip().lower()
@@ -2302,8 +2428,8 @@ def export_dataset(name: str, payload: dict | None = None):
     if export_format == "zip":
         import zipfile
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as z:
-            for item in sorted(export_dir.iterdir()):
-                z.write(item, arcname=item.name)
+            for item in sorted(export_dir.rglob("*")):
+                z.write(item, arcname=item.relative_to(export_dir))
     elif export_format == "rar":
         import subprocess
         if not shutil.which("rar"):
