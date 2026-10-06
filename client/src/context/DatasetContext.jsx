@@ -1280,12 +1280,6 @@ export function DatasetProvider({ children }) {
           applyAttrValue(i, newSelected)
         }
       }
-      if (e.key === '0') {
-        e.preventDefault()
-        if (group.type === 'single') {
-          applyAttrValue(-1, false)
-        }
-      }
       if (e.key === 'x' || e.key === 'X') {
         setConfirmingRemoveAttrImage(true)
       }
