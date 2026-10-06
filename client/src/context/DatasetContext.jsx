@@ -76,6 +76,7 @@ export function DatasetProvider({ children }) {
   const [showExportPanel, setShowExportPanel] = useState(false)
   const [datasetSettingsOpen, setDatasetSettingsOpen] = useState(false)
   const [savingDatasetSettings, setSavingDatasetSettings] = useState(false)
+  const [cloning, setCloning] = useState(false)
   const [datasetSplit, setDatasetSplit] = useState({
     train: 70,
     val: 20,
@@ -993,10 +994,7 @@ export function DatasetProvider({ children }) {
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: name.trim(),
-            template,
-          }),
+          body: JSON.stringify({ name: name.trim(), template }),
         },
       )
       const data = await response.json()
@@ -1015,6 +1013,45 @@ export function DatasetProvider({ children }) {
       setStatus('Failed: could not reach the server')
     } finally {
       setSavingDatasetSettings(false)
+    }
+  }
+
+  const doCloneDataset = async (newName, includeTemplate, includeAnnotations) => {
+    if (!activeDataset || cloning) return
+    if (!newName?.trim()) {
+      setStatus('Dataset name is required')
+      return
+    }
+    setCloning(true)
+    try {
+      const response = await fetch(
+        `/api/datasets/${encodeURIComponent(activeDataset)}/clone`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newName.trim(),
+            include_template: includeTemplate,
+            include_annotations: includeAnnotations,
+          }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      setStatus(
+        `Cloned to ${data.dataset} — ${data.images} images, ${data.annotations} annotations`,
+      )
+      setDatasetSettingsOpen(false)
+      fetchDatasets().then(() => {
+        navigate(`/datasets/${encodeURIComponent(data.dataset)}`)
+      })
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setCloning(false)
     }
   }
 
@@ -1440,6 +1477,8 @@ export function DatasetProvider({ children }) {
     doImportBatch,
     openDatasetSettings,
     doRemoveActiveDataset,
+    cloning,
+    doCloneDataset,
     doSaveDatasetSettings,
     doArchiveDataset,
     runPrelabel,

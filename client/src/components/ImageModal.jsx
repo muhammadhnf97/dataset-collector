@@ -116,31 +116,21 @@ export default function ImageModal({ images, index, onClose, onNavigate, onSelec
               sortedReviewers(
                 mergeReviewerMaps(attrReview[String(gi)], attrReview.all),
               )
-            if (!values) {
-              const any = sortedReviewers(
-                mergeReviewerMaps(...Object.values(attrReview)),
-              )
-              return (
-                <>
+            const anyReviewers = sortedReviewers(
+              mergeReviewerMaps(...Object.values(attrReview)),
+            )
+            return (
+              <>
+                {!values && (
                   <p className="flex items-center gap-1.5 py-1 text-slate-400">
                     <span className="inline-block h-2 w-2 rounded-full bg-red-400" />
                     Not annotated
                   </p>
-                  {any.length > 0 && (
-                    <p className="py-0.5 text-[10px] text-slate-400">
-                      Reviewed by{' '}
-                      {any
-                        .map(([u, at]) => `${u} · ${formatRelativeTime(at)}`)
-                        .join(', ')}
-                    </p>
-                  )}
-                </>
-              )
-            }
-            return attributes.map((group, gi) => {
-              const selected = (group.options ?? [])
-                .map((opt, i) => group.option_aliases?.[i] ?? opt)
-                .filter((_, i) => values[group.indices[i]] === 1)
+                )}
+                {attributes.map((group, gi) => {
+                  const selected = (group.options ?? [])
+                    .map((opt, i) => group.option_aliases?.[i] ?? opt)
+                    .filter((_, i) => values?.[group.indices[i]] === 1)
               const hasValue = selected.length > 0
               const rowReviewers = reviewersFor(gi)
               return (
@@ -186,8 +176,18 @@ export default function ImageModal({ images, index, onClose, onNavigate, onSelec
                     </span>
                   )}
                 </div>
-              )
-            })
+                  )
+                })}
+                {!values && anyReviewers.length > 0 && (
+                  <p className="py-0.5 text-[10px] text-slate-400">
+                    Reviewed by{' '}
+                    {anyReviewers
+                      .map(([u, at]) => `${u} · ${formatRelativeTime(at)}`)
+                      .join(', ')}
+                  </p>
+                )}
+              </>
+            )
           })()}
         </div>
       )}

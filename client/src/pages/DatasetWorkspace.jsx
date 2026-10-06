@@ -176,6 +176,8 @@ export default function DatasetWorkspace() {
     doImportBatch,
     openDatasetSettings,
     doRemoveActiveDataset,
+    cloning,
+    doCloneDataset,
     doSaveDatasetSettings,
     doArchiveDataset,
     runPrelabel,
@@ -302,7 +304,7 @@ export default function DatasetWorkspace() {
                 </svg>
               </button>
               {batchActionsMenuOpen && (
-                <div className="absolute right-0 z-30 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                <div className="absolute right-0 z-50 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
                   <button
                     type="button"
                     onClick={() => {
@@ -354,7 +356,7 @@ export default function DatasetWorkspace() {
                 </svg>
               </button>
               {exportMenuOpen && (
-                <div className="absolute right-0 z-30 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                <div className="absolute right-0 z-50 mt-1 w-52 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
                   <button
                     type="button"
                     onClick={() => {
@@ -549,6 +551,18 @@ export default function DatasetWorkspace() {
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setDatasetBatchToRemove(datasetBatchFilter)
+                setConfirmingRemoveDatasetBatch(true)
+              }}
+              disabled={!datasetBatchFilter}
+              title="Detach the selected batch — files are kept"
+              className="rounded-full border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-500 transition hover:bg-red-50 disabled:opacity-40"
+            >
+              Detach
+            </button>
             <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
               {(datasetBatchStats[datasetBatchFilter]?.annotated ??
                 0)}{' '}
@@ -930,7 +944,7 @@ export default function DatasetWorkspace() {
                   {attrAnnotate.batchFilter && (
                     <>
                       {' · '}
-                      {attrAnnotate.batchFilter.replace(/_/g, '/')}
+                      {attrAnnotate.batchFilter.replace(/^raw-images_/, 'raw-images/')}
                     </>
                   )}
                   {' · '}{attrAnnotate.imgIndex + 1} / {attrAnnotate.images.length}
@@ -991,7 +1005,7 @@ export default function DatasetWorkspace() {
                   </h3>
                   <p className="mt-1 text-sm text-slate-500">
                     {attrAnnotate.batchFilter
-                      ? attrAnnotate.batchFilter.replace(/^raw-images_/, '').replace(/_/g, '/')
+                      ? attrAnnotate.batchFilter.replace(/^raw-images_/, '')
                       : attrAnnotate.dataset}
                     {attrAnnotate.doneReviewed != null && (
                       <>
@@ -1391,7 +1405,9 @@ export default function DatasetWorkspace() {
           batches={datasetBatches}
           batchStats={datasetBatchStats}
           saving={savingDatasetSettings}
+          cloning={cloning}
           onSave={doSaveDatasetSettings}
+          onClone={doCloneDataset}
           onRemoveBatch={(batch) => {
             setDatasetBatchToRemove(batch)
             setConfirmingRemoveDatasetBatch(true)
