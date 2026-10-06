@@ -47,20 +47,43 @@ def find_checkpoint_file(model_dir: Path) -> Path | None:
 
 
 def load_predictor(model_dir: Path):
-    """Loads a trained checkpoint and returns (model, processor, groups, device)."""
+    """Loads a trained checkpoint and returns (model, processor, groups, device).
+
+    Handles quantization metadata written by quantize_siglip2.py: "fp16" casts
+    the model before loading, "int8-dynamic" rebuilds the quantized module
+    structure (packed Linear params) and runs on CPU since those kernels have
+    no GPU backend. Checkpoints without a "quantization" field are float32.
+    """
     ckpt_path = find_checkpoint_file(model_dir)
     if ckpt_path is None:
         raise FileNotFoundError(f"No best.pt/last.pt checkpoint found in {model_dir}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = torch.load(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location="cpu")
     base_checkpoint = ckpt.get("checkpoint")
     groups = ckpt.get("groups") or []
     if not base_checkpoint or not groups:
         raise ValueError(f"Checkpoint {ckpt_path} is missing 'checkpoint'/'groups' metadata")
+    quantization = ckpt.get("quantization")
 
-    model = Siglip2AttributeModel(base_checkpoint, groups).to(device)
+    model = Siglip2AttributeModel(base_checkpoint, groups)
+    if quantization == "int8-dynamic":
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            model = torch.quantization.quantize_dynamic(
+                model, {nn.Linear}, dtype=torch.qint8
+            )
+        device = torch.device("cpu")
+    else:
+        if quantization == "fp16":
+            model = model.half()
+        elif quantization not in (None, "fp32"):
+            raise ValueError(f"Unknown quantization mode '{quantization}' in {ckpt_path}")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     model.load_state_dict(ckpt["model_state"])
+    model.to(device)
     model.eval()
 
     processor = AutoImageProcessor.from_pretrained(base_checkpoint)
@@ -79,7 +102,9 @@ def predict_values(image_path: Path, predictor, attr_groups: list[dict]) -> list
     model, processor, ckpt_groups, device = predictor
 
     image = Image.open(image_path).convert("RGB")
-    pixel_values = processor(images=image, return_tensors="pt")["pixel_values"].to(device)
+    pixel_values = processor(images=image, return_tensors="pt")["pixel_values"].to(
+        device=device, dtype=next(model.parameters()).dtype
+    )
 
     with torch.no_grad():
         logits = model(pixel_values)
