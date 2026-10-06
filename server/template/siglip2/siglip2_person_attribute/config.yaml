@@ -15,7 +15,13 @@ attributes:
     indices: [2, 3, 4]
     options: [Male, Female, Unknown]
     option_aliases: ['Laki-laki', 'Perempuan', 'Tidak Jelas']
-text-format: "path/filename.jpg	0,1,0,1,0"
+  - name: Head
+    alias: Kepala
+    type: single
+    indices: [5, 6, 7, 8, 9]
+    options: [None, Hijab, Hat, Helm, Other]
+    option_aliases: ['Tidak Ada', 'Hijab', 'Topi', 'Helm', 'Lainnya']
+text-format: "path/filename.jpg	0,1,0,1,0,0,0,0,0,0"
 export:
   layout: metadata_jsonl
 folder:
