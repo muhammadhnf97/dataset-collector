@@ -1178,7 +1178,7 @@ export default function DatasetWorkspace() {
                             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-700">
                               0
                             </span>
-                            None
+                            Clear
                           </button>
                         )}
                       </div>
