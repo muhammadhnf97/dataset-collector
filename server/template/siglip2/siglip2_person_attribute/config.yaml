@@ -1,6 +1,6 @@
 framework-name: "SigLIP2"
 model-name: "siglip2_person_attribute"
-pre-label-model: "model/gender-age-1"
+pre-label-model: "model/person-attribute-2-fp16"
 model-annotation: "text"
 attributes:
   - name: Age
