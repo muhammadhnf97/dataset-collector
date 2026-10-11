@@ -18,46 +18,46 @@ attributes:
   - name: Headwear
     alias: Headwear
     type: single
-    indices: [5, 6, 7, 8, 9]
-    options: [None, Hijab, Hat, Helm, Other]
-    option_aliases: ['Tidak Ada', 'Hijab', 'Topi', 'Helm', 'Lainnya']
-  - name: Sleeve
-    alias: Lengan
-    type: single
-    indices: [10, 11, 12]
-    options: [Short, Long, Sleeveless]
-    option_aliases: ['Pendek', 'Panjang', 'Tanpa Lengan']
+    indices: [5, 6, 7, 8, 9, 10]
+    options: [None, Hijab, Hat, Helmet, Other, Unknown]
+    option_aliases: ['Tidak Ada', 'Hijab', 'Topi', 'Helm', 'Lainnya', 'Tidak Terlihat']
   - name: Upper
     alias: Atasan
     type: single
-    indices: [13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-    options: [TShirt, Polo, Shirt, Scrub, Tunic, Blouse, Hoodie, Sweater, Dress, Unknown]
-    option_aliases: ['Kaos', 'Polo', 'Kemeja', 'Scrub', 'Tunik', 'Blus', 'Hoodie', 'Sweater', 'Dress', 'Tidak Terlihat']
+    indices: [11, 12, 13, 14, 15, 16, 17, 18, 19]
+    options: [TShirt, Shirt, Polo, Blouse, Tunic, Sweater, Dress, Other, Unknown]
+    option_aliases: ['Kaos', 'Kemeja', 'Polo', 'Blus', 'Tunik', 'Sweater', 'Dress', 'Lainnya', 'Tidak Terlihat']
   - name: Outer
     alias: Luaran
     type: single
-    indices: [23, 24, 25, 26, 27, 28, 29]
-    options: [None, Jacket, Overshirt, Coat, Blazer, Vest, Cardigan]
-    option_aliases: ['Tidak Ada', 'Jaket', 'Overshirt', 'Mantel', 'Blazer', 'Rompi', 'Cardigan']
+    indices: [20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+    options: [None, Jacket, Overshirt, Hoodie, Coat, Blazer, Cardigan, Vest, Other, Unknown]
+    option_aliases: ['Tidak Ada', 'Jaket', 'Overshirt', 'Hoodie', 'Mantel', 'Blazer', 'Cardigan', 'Rompi', 'Lainnya', 'Tidak Terlihat']
+  - name: Sleeve
+    alias: Lengan
+    type: single
+    indices: [30, 31, 32, 33]
+    options: [Short, Long, Sleeveless, Unknown]
+    option_aliases: ['Pendek', 'Panjang', 'Tanpa Lengan', 'Tidak Terlihat']
   - name: Lower
     alias: Bawahan
     type: single
-    indices: [30, 31, 32, 33, 34]
-    options: [Trousers, Shorts, Skirt, Dress, Unknown]
-    option_aliases: ['Celana Panjang', 'Celana Pendek', 'Rok', 'Dress', 'Tidak Terlihat']
+    indices: [34, 35, 36, 37, 38]
+    options: [Trousers, Shorts, Skirt, Other, Unknown]
+    option_aliases: ['Celana Panjang', 'Celana Pendek', 'Rok', 'Lainnya', 'Tidak Terlihat']
   - name: Footwear
     alias: Footwear
     type: single
-    indices: [35, 36, 37, 38, 39, 40]
-    options: [Sneakers, Sandals, Boots, Formal, Heels, None]
-    option_aliases: ['Sneakers', 'Sandal', 'Boots', 'Pantofel', 'Heels', 'None']
+    indices: [39, 40, 41, 42, 43, 44, 45]
+    options: [Sneakers, Sandals, Boots, Formal, Heels, Other, Unknown]
+    option_aliases: ['Sneakers', 'Sandal', 'Boots', 'Pantofel', 'Heels', 'Lainnya', 'Tidak Terlihat']
   - name: Bag
     alias: Tas
     type: multi
-    indices: [41, 42, 43, 44, 45]
-    options: [Backpack, ShoulderBag, HandBag, ShoppingBag, Unknown]
-    option_aliases: ['Tas Ransel', 'Tas Selempang', 'Tas Tangan', 'Kantong Belanja', 'Tidak Terlihat']
-text-format: "path/filename.jpg	0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
+    indices: [46, 47, 48, 49, 50, 51]
+    options: [Backpack, ShoulderBag, HandBag, ShoppingBag, Other, Unknown]
+    option_aliases: ['Tas Ransel', 'Tas Selempang', 'Tas Tangan', 'Kantong Belanja', 'Lainnya', 'Tidak Terlihat']
+text-format: "path/filename.jpg	0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"
 export:
   layout: metadata_jsonl
 folder:

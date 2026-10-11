@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import ArchivesModal from '../components/ArchivesModal'
 import AssignToDatasetModal from '../components/AssignToDatasetModal'
 import BatchWarnModal from '../components/BatchWarnModal'
@@ -43,6 +44,20 @@ export default function DatasetWorkspace() {
   const { currentUser, requireUser } = useUser()
   const ds = useDataset()
   const [toolbarOpen, setToolbarOpen] = useLocalStorage('dataset-toolbar-open', true)
+  const [toolbarPinned, setToolbarPinned] = useLocalStorage('dataset-toolbar-pinned', false)
+  const toolbarRef = useRef(null)
+  const toolbarToggleRef = useRef(null)
+
+  useEffect(() => {
+    if (!toolbarOpen || toolbarPinned) return undefined
+    const onDown = (e) => {
+      if (toolbarRef.current?.contains(e.target)) return
+      if (toolbarToggleRef.current?.contains(e.target)) return
+      setToolbarOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [toolbarOpen, toolbarPinned, setToolbarOpen])
 
   const {
     datasetName,
@@ -262,6 +277,7 @@ export default function DatasetWorkspace() {
                 ))}
               </select>
               <button
+                ref={toolbarToggleRef}
                 type="button"
                 onClick={() => setToolbarOpen((v) => !v)}
                 title={toolbarOpen ? 'Hide batch toolbar' : 'Show batch toolbar'}
@@ -424,9 +440,16 @@ export default function DatasetWorkspace() {
           </div>
         </div>
 
-        <div className="relative min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1 flex-col">
         {toolbarOpen && datasetBatches.length > 0 && (
-          <div className="absolute inset-x-0 top-0 z-30 flex flex-wrap items-center gap-3 border-b border-slate-200/70 bg-white/95 px-5 py-2 shadow-lg shadow-slate-900/10 backdrop-blur-sm">
+          <div
+            ref={toolbarRef}
+            className={
+              toolbarPinned
+                ? 'z-10 flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-200/70 bg-white px-5 py-2'
+                : 'absolute inset-x-0 top-0 z-30 flex flex-wrap items-center gap-3 border-b border-slate-200/70 bg-white/95 px-5 py-2 shadow-lg shadow-slate-900/10 backdrop-blur-sm'
+            }
+          >
             <div ref={batchMenuRef} className="relative">
               {(() => {
                 const current = datasetBatchFilter ?? datasetBatches[0] ?? ''
@@ -814,11 +837,34 @@ export default function DatasetWorkspace() {
                     ? 'Exit similar'
                     : 'Group similar'}
               </button>
+              <button
+                type="button"
+                onClick={() => setToolbarPinned((v) => !v)}
+                title={
+                  toolbarPinned
+                    ? 'Unpin — toolbar overlays the grid and hides when you click outside'
+                    : 'Pin — keeps the toolbar open in place without covering images'
+                }
+                className={`flex h-7 w-7 items-center justify-center rounded-full border transition ${
+                  toolbarPinned
+                    ? 'border-indigo-300 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                    : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z" />
+                </svg>
+              </button>
             </div>
           </div>
         )}
 
-        <div className="h-full overflow-y-auto">
+        <div className="isolate min-h-0 flex-1 overflow-y-auto">
         <div
           ref={datasetGridRef}
           className={`relative px-6 pb-5 pt-2 ${datasetSelectMode || similarView ? 'select-none' : ''}`}
