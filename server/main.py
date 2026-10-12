@@ -2389,15 +2389,32 @@ def export_dataset(name: str, payload: dict | None = None):
                 record = {"file_name": dest.name}
                 for group in attr_groups:
                     options = group.get("options") or []
+                    indices = group.get("indices") or []
+                    key = str(group.get("name", "")).lower()
+                    if group.get("type") == "multi":
+                        # Multi-select groups export a list of picked option
+                        # names. [] is a real "none present" label; the row is
+                        # only null when the image isn't annotated at all.
+                        picked = [
+                            options[j]
+                            for j, idx in enumerate(indices)
+                            if idx < len(values) and values[idx] == 1
+                        ]
+                        record[key] = (
+                            [o.lower() for o in picked]
+                            if source_url in annotations
+                            else None
+                        )
+                        continue
                     selected = next(
                         (
                             options[j]
-                            for j, idx in enumerate(group.get("indices") or [])
+                            for j, idx in enumerate(indices)
                             if idx < len(values) and values[idx] == 1
                         ),
                         None,
                     )
-                    record[str(group.get("name", "")).lower()] = (
+                    record[key] = (
                         selected.lower() if isinstance(selected, str) else None
                     )
                 lines.append(json.dumps(record, ensure_ascii=False))

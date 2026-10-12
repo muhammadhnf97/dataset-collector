@@ -1412,6 +1412,9 @@ export default function DatasetWorkspace() {
           onGroupSplitChange={setExportGroupSplit}
           selectedBatches={selectedExportBatches}
           onSelectedBatchesChange={setSelectedExportBatches}
+          batchStats={datasetBatchStats}
+          batchReviewed={batchReviewedCounts}
+          batchHandlers={batchHandlers}
           result={exportResult}
           exporting={exporting}
           onExport={doExportDataset}

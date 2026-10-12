@@ -11,6 +11,9 @@ export default function ExportDatasetModal({
   onGroupSplitChange,
   selectedBatches,
   onSelectedBatchesChange,
+  batchStats,
+  batchReviewed,
+  batchHandlers,
   result,
   exporting,
   onExport,
@@ -98,28 +101,63 @@ export default function ExportDatasetModal({
           {batches.length === 0 && (
             <p className="text-sm text-slate-500">No batches imported</p>
           )}
-          {batches.map((batch) => (
-            <label
-              key={batch}
-              className="flex items-center gap-2 py-1 text-sm text-slate-700"
-            >
-              <input
-                type="checkbox"
-                checked={selectedBatches.includes(batch)}
-                onChange={(e) =>
-                  onSelectedBatchesChange((prev) =>
-                    e.target.checked
-                      ? [...new Set([...prev, batch])]
-                      : prev.filter((b) => b !== batch),
-                  )
-                }
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-              />
-              <span className="truncate" title={batch}>
-                {batch}
-              </span>
-            </label>
-          ))}
+          {batches.map((batch) => {
+            const stats = batchStats?.[batch]
+            const total = stats?.total ?? 0
+            const annotated = stats?.annotated ?? 0
+            const reviewed = batchReviewed?.[batch] ?? 0
+            const coverage = batchHandlers?.[batch]?.coverage
+            const pct = coverage != null ? Math.round(coverage * 100) : null
+            const done = pct !== null && pct >= 100
+            return (
+              <label
+                key={batch}
+                className="flex items-center gap-2 py-1 text-sm text-slate-700"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedBatches.includes(batch)}
+                  onChange={(e) =>
+                    onSelectedBatchesChange((prev) =>
+                      e.target.checked
+                        ? [...new Set([...prev, batch])]
+                        : prev.filter((b) => b !== batch),
+                    )
+                  }
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate" title={batch}>
+                      {batch}
+                    </span>
+                    {pct !== null && (
+                      <span
+                        className={`shrink-0 text-xs font-semibold ${
+                          done ? 'text-emerald-600' : 'text-indigo-600'
+                        }`}
+                      >
+                        {done ? '✓ ' : ''}
+                        {pct}%
+                      </span>
+                    )}
+                  </span>
+                  <span className="mt-0.5 block h-1 overflow-hidden rounded-full bg-slate-200">
+                    <span
+                      className={`block h-full rounded-full ${
+                        done ? 'bg-emerald-500' : 'bg-indigo-500'
+                      }`}
+                      style={{ width: `${Math.min(pct ?? 0, 100)}%` }}
+                    />
+                  </span>
+                  <span className="block truncate text-[11px] text-slate-400">
+                    annotated {annotated}/{total}
+                    {` · reviewed ${reviewed}/${total}`}
+                  </span>
+                </span>
+              </label>
+            )
+          })}
         </div>
       </div>
 

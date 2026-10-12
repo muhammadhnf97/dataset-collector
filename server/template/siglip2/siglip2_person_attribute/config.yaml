@@ -1,6 +1,6 @@
 framework-name: "SigLIP2"
 model-name: "siglip2_person_attribute"
-pre-label-model: "model/person-attribute-3-fp32"
+pre-label-model: "model/person-attribute-fp32"
 model-annotation: "text"
 attributes:
   - name: Age
@@ -50,7 +50,7 @@ attributes:
     type: single
     indices: [34, 35, 36, 37, 38, 39]
     options: [Sneakers, Sandals, Formal, Heels, Other, Unknown]
-    option_aliases: ['Sneakers', 'Sandal', 'Pantofel', 'Heels', 'Lainnya', 'Tidak Terlihat']
+    option_aliases: ['Sneakers', 'Sandal', 'Formal', 'Heels', 'Lainnya', 'Tidak Terlihat']
   - name: Bag
     alias: Tas
     type: multi
