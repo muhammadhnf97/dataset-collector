@@ -85,6 +85,12 @@ export default function DatasetBatchSection({
 
   return (
     <div className="mt-4">
+      <div className="mb-2 flex items-center gap-2 text-xs text-slate-400">
+        <span className="font-medium text-slate-500">{batchName}</span>
+        <span>
+          {loadedCount} / {total} shown
+        </span>
+      </div>
 
       {loadedCount === 0 && loading ? (
         <SkeletonGrid

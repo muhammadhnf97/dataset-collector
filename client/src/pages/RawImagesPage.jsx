@@ -6,12 +6,18 @@ import ImageModal from '../components/ImageModal'
 import SkeletonImg from '../components/SkeletonImg'
 import SkeletonGrid from '../components/SkeletonGrid'
 import SourceModal from '../components/SourceModal'
+import SplitBatchModal from '../components/SplitBatchModal'
 import UploadSourceModal from '../components/UploadSourceModal'
 import { ArchiveIcon } from '../components/icons'
 import { useAppData } from '../context/AppDataContext'
-import { GRID_COLS, GRID_COL_OPTIONS, MASONRY_COLS, useLocalStorage } from '../utils'
-
-const IMAGES_PER_PAGE = 50
+import {
+  DATASET_PAGE_LIMIT,
+  GRID_COLS,
+  GRID_COL_OPTIONS,
+  MASONRY_COLS,
+  pollJob,
+  useLocalStorage,
+} from '../utils'
 
 export default function RawImagesPage() {
   const {
@@ -36,9 +42,21 @@ export default function RawImagesPage() {
   const [removeRawMode, setRemoveRawMode] = useState(false)
   const [selectedRawsToRemove, setSelectedRawsToRemove] = useState(new Set())
   const [confirmingRemoveRaws, setConfirmingRemoveRaws] = useState(false)
+  const [deletingRaws, setDeletingRaws] = useState(false)
   const [modalIndex, setModalIndex] = useState(null)
-  const [imagePage, setImagePage] = useState(0)
   const [rawImagesTotal, setRawImagesTotal] = useState(0)
+  const [loadingMoreRaws, setLoadingMoreRaws] = useState(false)
+  const rawImagesInFlightRef = useRef(false)
+  const rawImagesSentinelRef = useRef(null)
+  const [rawImageSelectMode, setRawImageSelectMode] = useState(false)
+  const [selectedRawImageIds, setSelectedRawImageIds] = useState(new Set())
+  const [confirmingDeleteRawImages, setConfirmingDeleteRawImages] = useState(false)
+  const [deletingRawImages, setDeletingRawImages] = useState(false)
+  const [splitOpen, setSplitOpen] = useState(false)
+  const [splittingBatch, setSplittingBatch] = useState(false)
+  const [splitProgress, setSplitProgress] = useState(null)
+  const [tagsMenuOpen, setTagsMenuOpen] = useState(false)
+  const tagsMenuRef = useRef(null)
   const [sourceModalOpen, setSourceModalOpen] = useState(false)
   const [uploadSourceId, setUploadSourceId] = useState('')
   const [uploadSourceOpen, setUploadSourceOpen] = useState(false)
@@ -135,9 +153,7 @@ export default function RawImagesPage() {
     return Object.entries(byDataset).sort(([a], [b]) => a.localeCompare(b))
   }, [selectedRawsToRemove, datasetsByBatch])
 
-  const totalForPaging = rawImagesTotal
-  const pageCount = Math.max(1, Math.ceil(totalForPaging / IMAGES_PER_PAGE))
-  const pageImages = activeImages
+  const rawImagesHasMore = activeImages.length < rawImagesTotal
 
   const navigateModal = (delta) => {
     setModalIndex((i) =>
@@ -150,9 +166,98 @@ export default function RawImagesPage() {
   const openBatch = (source) => {
     if (source === batchSlug) return
     setSelectedRawImages([])
-    setImagePage(0)
     setModalIndex(null)
+    setRawImageSelectMode(false)
+    setSelectedRawImageIds(new Set())
+    setTagsMenuOpen(false)
     navigate(`/raw-images/${encodeURIComponent(source)}`)
+  }
+
+  const toggleRawImageSelect = (id) => {
+    setSelectedRawImageIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const doDeleteSelectedRawImages = async () => {
+    if (selectedRawImageIds.size === 0) return
+    setConfirmingDeleteRawImages(false)
+    setDeletingRawImages(true)
+    const ids = [...selectedRawImageIds]
+    try {
+      setStatus(`Deleting ${ids.length} image${ids.length === 1 ? '' : 's'}...`)
+      const response = await fetch('/api/images/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      if (data.job_id) {
+        const job = await pollJob(data.job_id, {
+          onProgress: (j) =>
+            setStatus(`Deleting images — ${j.done}/${j.total}`),
+        })
+        if (job.status === 'error') {
+          setStatus(`Failed: ${job.error ?? 'Delete job failed'}`)
+        } else {
+          setStatus(`Deleted ${job.detail?.deleted ?? job.done} images`)
+        }
+      }
+      setSelectedRawImages((prev) => prev.filter((img) => !selectedRawImageIds.has(img.id)))
+      setRawImagesTotal((t) => Math.max(0, t - ids.length))
+      setSelectedRawImageIds(new Set())
+      setRawImageSelectMode(false)
+      fetchBatches()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setDeletingRawImages(false)
+    }
+  }
+
+  const doSplitBatch = async (chunkSize) => {
+    if (!selectedRaw || splittingBatch) return
+    setSplittingBatch(true)
+    setSplitProgress({ done: 0, total: rawImagesTotal })
+    try {
+      const response = await fetch(
+        `/api/batches/${encodeURIComponent(`raw-images/${selectedRaw}`)}/split`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chunk_size: chunkSize }),
+        },
+      )
+      const data = await response.json()
+      if (!response.ok) {
+        setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
+        return
+      }
+      const job = await pollJob(data.job_id, {
+        onProgress: (j) => setSplitProgress({ done: j.done, total: j.total }),
+      })
+      if (job.status === 'error') {
+        setStatus(`Failed: ${job.error ?? 'Split job failed'}`)
+      } else {
+        setStatus(
+          `Split ${selectedRaw} into ${data.parts.length} batches of up to ${chunkSize} images`,
+        )
+        setSplitOpen(false)
+        navigate('/raw-images')
+      }
+      fetchBatches()
+    } catch {
+      setStatus('Failed: could not reach the server')
+    } finally {
+      setSplittingBatch(false)
+      setSplitProgress(null)
+    }
   }
 
   const toggleGroup = (key) => {
@@ -163,26 +268,77 @@ export default function RawImagesPage() {
     })
   }
 
+  // Groups start collapsed by default — only runs once, the first time
+  // groups become available, so it never re-collapses something the user
+  // already opened. The group containing a deep-linked batch (e.g. from a
+  // direct URL) stays expanded so the selection is visible.
+  const groupsInitRef = useRef(false)
+  useEffect(() => {
+    if (groupsInitRef.current || rawSourceGroups.length === 0) return
+    groupsInitRef.current = true
+    const activeGroupKey = rawSourceGroups.find((g) =>
+      g.items.some((item) => item.source === batchSlug),
+    )?.key
+    setCollapsedGroups(
+      new Set(
+        rawSourceGroups
+          .map((g) => g.key)
+          .filter((key) => key !== activeGroupKey),
+      ),
+    )
+  }, [rawSourceGroups, batchSlug])
+
+  useEffect(() => {
+    if (!tagsMenuOpen) return
+    const handleClick = (e) => {
+      if (tagsMenuRef.current && !tagsMenuRef.current.contains(e.target)) {
+        setTagsMenuOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClick)
+    return () => window.removeEventListener('mousedown', handleClick)
+  }, [tagsMenuOpen])
+
   const doDeleteSelectedRaws = async () => {
     if (selectedRawsToRemove.size === 0) return
     setConfirmingRemoveRaws(false)
+    setDeletingRaws(true)
     let deleted = 0
     let failed = 0
-    for (const batch of selectedRawsToRemove) {
+    const batchList = [...selectedRawsToRemove]
+    let batchIndex = 0
+    for (const batch of batchList) {
+      batchIndex += 1
+      const label = batch.split('/').pop()
       try {
+        setStatus(`Deleting ${label} (${batchIndex}/${batchList.length})...`)
         const response = await fetch(
           `/api/batches/${encodeURIComponent(batch)}`,
           { method: 'DELETE' },
         )
-        if (response.ok) {
-          deleted += 1
-        } else {
+        const data = await response.json()
+        if (!response.ok) {
           failed += 1
+          continue
         }
+        if (data.job_id) {
+          const job = await pollJob(data.job_id, {
+            onProgress: (j) =>
+              setStatus(
+                `Deleting ${label} (${batchIndex}/${batchList.length}) — ${j.done}/${j.total || '?'}`,
+              ),
+          })
+          if (job.status === 'error') {
+            failed += 1
+            continue
+          }
+        }
+        deleted += 1
       } catch {
         failed += 1
       }
     }
+    setDeletingRaws(false)
     if (deleted > 0) {
       setSelectedRawImages([])
       fetchBatches()
@@ -236,31 +392,61 @@ export default function RawImagesPage() {
     }
   }
 
-  const fetchRawImages = async (batchId, page) => {
-    setRawImagesLoading(true)
+  // Infinite scroll, same pattern as DatasetBatchSection: `replace` reloads
+  // from page 0 (new batch selected), otherwise appends the next page.
+  const fetchRawImages = async (batchId, page, replace) => {
+    if (rawImagesInFlightRef.current && !replace) return
+    rawImagesInFlightRef.current = true
+    if (replace) setRawImagesLoading(true)
+    else setLoadingMoreRaws(true)
     try {
       const response = await fetch(
-        `/api/images?id=${encodeURIComponent(batchId)}&page=${page}&limit=${IMAGES_PER_PAGE}`,
+        `/api/images?id=${encodeURIComponent(batchId)}&page=${page}&limit=${DATASET_PAGE_LIMIT}`,
       )
       const data = await response.json()
-      setSelectedRawImages(data.images ?? [])
+      setSelectedRawImages((prev) =>
+        replace ? (data.images ?? []) : [...prev, ...(data.images ?? [])],
+      )
       setRawImagesTotal(data.total ?? data.images?.length ?? 0)
     } catch {
       setStatus('Failed: could not reach the server')
     } finally {
+      rawImagesInFlightRef.current = false
       setRawImagesLoading(false)
+      setLoadingMoreRaws(false)
     }
   }
 
   useEffect(() => {
     if (selectedBatchId !== null) {
-      fetchRawImages(selectedBatchId, imagePage)
+      fetchRawImages(selectedBatchId, 0, true)
     } else {
       setSelectedRawImages([])
       setRawImagesTotal(0)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBatchId, imagePage])
+  }, [selectedBatchId])
+
+  // auto-load the next page when the sentinel scrolls near the viewport
+  useEffect(() => {
+    const el = rawImagesSentinelRef.current
+    if (!el || !rawImagesHasMore || rawImagesLoading || selectedBatchId === null) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          fetchRawImages(
+            selectedBatchId,
+            Math.floor(selectedRawImages.length / DATASET_PAGE_LIMIT),
+            false,
+          )
+        }
+      },
+      { rootMargin: '400px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawImagesHasMore, rawImagesLoading, selectedRawImages.length, selectedBatchId])
 
   const handleImageChange = async (event) => {
     const file = event.target.files?.[0]
@@ -511,36 +697,143 @@ export default function RawImagesPage() {
               <h3 className="text-base font-semibold text-slate-800">
                 {selectedRaw}
               </h3>
-              <span className="rounded-full bg-slate-200/80 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                {rawImagesTotal} images
+              <span className="flex h-7 items-center rounded-full bg-slate-200/80 px-3 text-xs font-medium text-slate-600">
+                {activeImages.length} / {rawImagesTotal} images
               </span>
-              {selectedRawInfo.type && (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                  {selectedRawInfo.type}
-                </span>
+              {(selectedRawInfo.type ||
+                selectedRawInfo.sourceInfo ||
+                selectedDatasets.length > 0) && (
+                <div ref={tagsMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setTagsMenuOpen((v) => !v)}
+                    className="flex h-7 items-center gap-1 rounded-full border border-slate-300 bg-white px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+                  >
+                    Tags
+                    <span className="text-slate-400">
+                      (
+                      {(selectedRawInfo.type ? 1 : 0) +
+                        (selectedRawInfo.sourceInfo ? 1 : 0) +
+                        selectedDatasets.length}
+                      )
+                    </span>
+                    <svg
+                      className={`h-3 w-3 transition-transform ${tagsMenuOpen ? 'rotate-180' : ''}`}
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={2}
+                      stroke="currentColor"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                    </svg>
+                  </button>
+                  {tagsMenuOpen && (
+                    <div className="absolute left-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white p-2 shadow-lg">
+                      {selectedRawInfo.type && (
+                        <span className="mb-1 mr-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                          {selectedRawInfo.type}
+                        </span>
+                      )}
+                      {selectedRawInfo.sourceInfo && (
+                        <span className="mb-1 mr-1 inline-block rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-600">
+                          {selectedRawInfo.sourceInfo.name} · v
+                          {selectedRawInfo.sourceInfo.version}
+                        </span>
+                      )}
+                      {selectedDatasets.map((ds) => (
+                        <span
+                          key={ds}
+                          className="mb-1 mr-1 inline-block rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700"
+                        >
+                          {ds}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
-              {selectedRawInfo.sourceInfo && (
-                <span className="rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-600">
-                  {selectedRawInfo.sourceInfo.name} · v
-                  {selectedRawInfo.sourceInfo.version}
-                </span>
-              )}
-              {selectedDatasets.map((ds) => (
-                <span
-                  key={ds}
-                  className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700"
-                >
-                  {ds}
-                </span>
-              ))}
               <button
                 type="button"
-                onClick={() => setGenerateOpen(true)}
-                disabled={rawGenerating}
-                className="ml-auto rounded-lg bg-indigo-500 px-4 py-1.5 text-sm font-semibold text-white shadow transition hover:bg-indigo-600 disabled:opacity-50"
+                onClick={() =>
+                  setGridMode((m) =>
+                    m === 'landscape'
+                      ? 'portrait'
+                      : m === 'portrait'
+                        ? 'natural'
+                        : 'landscape',
+                  )
+                }
+                title={`Grid: ${gridMode} — click to switch`}
+                className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100"
               >
-                Generate crops
+                {gridMode === 'landscape' ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="3" y="7" width="18" height="10" rx="1.5" />
+                  </svg>
+                ) : gridMode === 'portrait' ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="7" y="3" width="10" height="18" rx="1.5" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <rect x="3" y="4" width="8" height="9" rx="1" />
+                    <rect x="13" y="4" width="8" height="5" rx="1" />
+                    <rect x="3" y="15" width="8" height="5" rx="1" />
+                    <rect x="13" y="11" width="8" height="9" rx="1" />
+                  </svg>
+                )}
               </button>
+              <select
+                value={gridCols[gridMode]}
+                onChange={(e) =>
+                  setGridCols((prev) => ({
+                    ...prev,
+                    [gridMode]: Number(e.target.value),
+                  }))
+                }
+                title="Columns"
+                className="h-7 rounded-full border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 outline-none transition hover:bg-slate-100"
+              >
+                {GRID_COL_OPTIONS.map((n) => (
+                  <option key={n} value={n}>
+                    {n} col
+                  </option>
+                ))}
+              </select>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (rawImageSelectMode) setSelectedRawImageIds(new Set())
+                    setRawImageSelectMode((v) => !v)
+                  }}
+                  className={`flex h-7 items-center rounded-full border px-3 text-xs font-medium transition ${
+                    rawImageSelectMode
+                      ? 'border-indigo-300 bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                      : 'border-slate-300 bg-white text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {rawImageSelectMode ? 'Cancel' : 'Select images'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSplitOpen(true)}
+                  disabled={rawImagesTotal < 2}
+                  title="Split this batch into smaller batches"
+                  className="flex h-7 items-center rounded-full border border-slate-300 bg-white px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Split
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGenerateOpen(true)}
+                  disabled={rawGenerating}
+                  className="flex h-7 items-center rounded-full bg-indigo-500 px-3 text-xs font-medium text-white shadow transition hover:bg-indigo-600 disabled:opacity-50"
+                >
+                  Generate crops
+                </button>
+              </div>
             </div>
 
             </div>
@@ -558,12 +851,14 @@ export default function RawImagesPage() {
               </div>
             ) : gridMode === 'natural' ? (
               <div className={`mt-4 gap-3 ${MASONRY_COLS[gridCols[gridMode]]}`}>
-                {pageImages.map((image) => (
+                {activeImages.map((image) => (
                   <button
                     key={image.id ?? image}
                     type="button"
                     onClick={() =>
-                      setModalIndex(activeImages.indexOf(image))
+                      rawImageSelectMode
+                        ? toggleRawImageSelect(image.id)
+                        : setModalIndex(activeImages.indexOf(image))
                     }
                     className="group relative mb-3 block w-full overflow-hidden rounded-lg shadow transition break-inside-avoid hover:shadow-lg"
                   >
@@ -574,6 +869,17 @@ export default function RawImagesPage() {
                       decoding="async"
                       className="w-full bg-slate-200 transition duration-150 group-hover:scale-105"
                     />
+                    {rawImageSelectMode && (
+                      <span
+                        className={`absolute left-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold shadow ${
+                          selectedRawImageIds.has(image.id)
+                            ? 'bg-red-500 text-white'
+                            : 'bg-white/50 text-transparent'
+                        }`}
+                      >
+                        ✓
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -581,12 +887,14 @@ export default function RawImagesPage() {
               <div
                 className={`mt-4 grid gap-3 ${GRID_COLS[gridCols[gridMode]]}`}
               >
-                {pageImages.map((image) => (
+                {activeImages.map((image) => (
                   <button
                     key={image.id ?? image}
                     type="button"
                     onClick={() =>
-                      setModalIndex(activeImages.indexOf(image))
+                      rawImageSelectMode
+                        ? toggleRawImageSelect(image.id)
+                        : setModalIndex(activeImages.indexOf(image))
                     }
                     className="group relative overflow-hidden rounded-lg shadow transition hover:shadow-lg"
                   >
@@ -601,6 +909,17 @@ export default function RawImagesPage() {
                           : 'aspect-video'
                       }`}
                     />
+                    {rawImageSelectMode && (
+                      <span
+                        className={`absolute left-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold shadow ${
+                          selectedRawImageIds.has(image.id)
+                            ? 'bg-red-500 text-white'
+                            : 'bg-white/50 text-transparent'
+                        }`}
+                      >
+                        ✓
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -610,83 +929,76 @@ export default function RawImagesPage() {
                 No images yet
               </div>
             )}
-            </div>
-            <div className="flex shrink-0 items-center gap-3 border-t border-slate-200/70 px-6 py-3">
-              <button
-                type="button"
+            {rawImagesHasMore && (
+              <div
+                ref={rawImagesSentinelRef}
                 onClick={() =>
-                  setGridMode((m) =>
-                    m === 'landscape'
-                      ? 'portrait'
-                      : m === 'portrait'
-                        ? 'natural'
-                        : 'landscape',
+                  !loadingMoreRaws &&
+                  fetchRawImages(
+                    selectedBatchId,
+                    Math.floor(activeImages.length / DATASET_PAGE_LIMIT),
+                    false,
                   )
                 }
-                title={`Grid: ${gridMode} — click to switch`}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100"
+                title="Click to load more"
+                className="mt-3 flex cursor-pointer items-center gap-2 py-2 text-xs text-slate-400 transition hover:text-slate-600"
               >
-                {gridMode === 'landscape' ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                    <rect x="3" y="7" width="18" height="10" rx="1.5" />
-                  </svg>
-                ) : gridMode === 'portrait' ? (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                    <rect x="7" y="3" width="10" height="18" rx="1.5" />
-                  </svg>
-                ) : (
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                    <rect x="3" y="4" width="8" height="9" rx="1" />
-                    <rect x="13" y="4" width="8" height="5" rx="1" />
-                    <rect x="3" y="15" width="8" height="5" rx="1" />
-                    <rect x="13" y="11" width="8" height="9" rx="1" />
-                  </svg>
+                {loadingMoreRaws && (
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-500" />
                 )}
-              </button>
-              <select
-                value={gridCols[gridMode]}
-                onChange={(e) =>
-                  setGridCols((prev) => ({
-                    ...prev,
-                    [gridMode]: Number(e.target.value),
-                  }))
-                }
-                title="Columns"
-                className="h-8 rounded-full border border-slate-300 bg-white px-2 text-xs font-medium text-slate-600 outline-none transition hover:bg-slate-100"
-              >
-                {GRID_COL_OPTIONS.map((n) => (
-                  <option key={n} value={n}>
-                    {n} col
-                  </option>
-                ))}
-              </select>
-              <div className="ml-auto flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setImagePage((p) => Math.max(0, p - 1))}
-                  disabled={imagePage === 0}
-                  className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
-                >
-                  ← Prev
-                </button>
-                <span className="text-sm text-slate-500">
-                  Page {imagePage + 1} of {pageCount} · {totalForPaging} images
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setImagePage((p) => Math.min(pageCount - 1, p + 1))
-                  }
-                  disabled={imagePage >= pageCount - 1}
-                  className="rounded-full bg-white px-4 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
-                >
-                  Next →
-                </button>
+                {loadingMoreRaws
+                  ? 'Loading more...'
+                  : `${activeImages.length} / ${rawImagesTotal} — scroll for more`}
               </div>
+            )}
             </div>
           </>
         )}
       </div>
+
+      {rawImageSelectMode && selectedRawImageIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full border border-slate-200 bg-white/95 px-4 py-2 shadow-xl backdrop-blur">
+          <span className="text-sm font-medium text-slate-700">
+            {selectedRawImageIds.size} selected
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              setSelectedRawImageIds(
+                new Set(activeImages.map((img) => img.id)),
+              )
+            }
+            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+          >
+            Select all
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedRawImageIds(new Set())}
+            className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-100"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmingDeleteRawImages(true)}
+            disabled={deletingRawImages}
+            className="rounded-full bg-red-500 px-4 py-1 text-sm font-medium text-white transition hover:bg-red-600 disabled:opacity-50"
+          >
+            Remove
+          </button>
+        </div>
+      )}
+
+      {confirmingDeleteRawImages && (
+        <ConfirmModal
+          count={selectedRawImageIds.size}
+          title={`Delete ${selectedRawImageIds.size} image${selectedRawImageIds.size === 1 ? '' : 's'}?`}
+          message="This permanently removes the selected images from disk. This action cannot be undone."
+          onCancel={() => setConfirmingDeleteRawImages(false)}
+          onConfirm={doDeleteSelectedRawImages}
+        />
+      )}
 
       <ImageModal
         images={activeImages}
@@ -703,6 +1015,17 @@ export default function RawImagesPage() {
           generating={rawGenerating}
           onGenerate={doGenerateRaw}
           onClose={() => setGenerateOpen(false)}
+        />
+      )}
+
+      {splitOpen && (
+        <SplitBatchModal
+          batch={selectedRaw}
+          totalImages={rawImagesTotal}
+          progress={splitProgress}
+          splitting={splittingBatch}
+          onSplit={doSplitBatch}
+          onClose={() => setSplitOpen(false)}
         />
       )}
 

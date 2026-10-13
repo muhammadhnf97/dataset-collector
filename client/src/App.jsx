@@ -20,10 +20,21 @@ function App() {
   const location = useLocation()
   const navigate = useNavigate()
   const {
+    status,
+    setStatus,
     confirmingDeleteArchive,
     setConfirmingDeleteArchive,
     doDeleteArchive,
   } = useAppData()
+
+  // Auto-dismiss the status toast a few seconds after the last update — long
+  // jobs call setStatus repeatedly (progress ticks), which keeps resetting
+  // this timer, so the toast stays up for the whole operation and then fades.
+  useEffect(() => {
+    if (!status) return
+    const timer = setTimeout(() => setStatus(null), 5000)
+    return () => clearTimeout(timer)
+  }, [status, setStatus])
   const {
     currentUser,
     users,
@@ -163,6 +174,22 @@ function App() {
           onCancel={() => setConfirmingDeleteArchive(null)}
           onConfirm={() => doDeleteArchive(confirmingDeleteArchive.id)}
         />
+      )}
+
+      {status && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[70] flex justify-center px-4">
+          <div className="pointer-events-auto flex max-w-xl items-center gap-3 rounded-full bg-slate-900/95 px-4 py-2 text-sm text-white shadow-xl backdrop-blur-sm">
+            <span className="truncate">{status}</span>
+            <button
+              type="button"
+              onClick={() => setStatus(null)}
+              className="shrink-0 text-slate-400 transition hover:text-white"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )

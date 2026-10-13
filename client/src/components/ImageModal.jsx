@@ -33,34 +33,19 @@ export default function ImageModal({ images, index, onClose, onNavigate, onSelec
       >
         <Filmstrip images={images} index={index} onSelect={onSelect} />
 
-      {(onRemove || onAnnotate) && (
+      {onRemove && (
         <div className="absolute left-4 top-24 z-10 flex items-center gap-2">
-          {onAnnotate && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                const current = images[index]
-                onAnnotate(current.path ?? current)
-              }}
-              className="flex h-10 items-center justify-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-emerald-500"
-            >
-              Annotate
-            </button>
-          )}
-          {onRemove && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                const current = images[index]
-                onRemove(current.path ?? current)
-              }}
-              className="flex h-10 items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-red-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-red-500"
-            >
-              Remove
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              const current = images[index]
+              onRemove(current.path ?? current)
+            }}
+            className="flex h-10 items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-red-500/80 px-4 text-sm font-semibold text-white backdrop-blur-md transition hover:bg-red-500"
+          >
+            Remove
+          </button>
         </div>
       )}
 

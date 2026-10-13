@@ -75,6 +75,88 @@ def annotation_lock(name: str) -> threading.Lock:
         return _annotation_locks[name]
 
 
+# --- Background jobs -------------------------------------------------------
+# Long-running operations (prelabel, batch delete) run in a daemon thread and
+# report progress through this in-memory registry, so the client can poll
+# instead of blocking on one HTTP request with no feedback. Jobs are lost on
+# server restart — acceptable for a single-process playground server.
+
+_jobs_lock = threading.Lock()
+_jobs: dict[str, dict] = {}
+
+
+def create_job(job_type: str, total: int = 0, detail: dict | None = None) -> dict:
+    job = {
+        "id": uuid.uuid4().hex,
+        "type": job_type,
+        "status": "running",  # running | done | error | cancelled
+        "total": total,
+        "done": 0,
+        "detail": detail or {},
+        "error": None,
+        "created_at": datetime.utcnow().isoformat(),
+        "finished_at": None,
+        "cancel_requested": False,
+    }
+    with _jobs_lock:
+        _jobs[job["id"]] = job
+    return job
+
+
+def get_job(job_id: str) -> dict | None:
+    with _jobs_lock:
+        return _jobs.get(job_id)
+
+
+def job_public(job: dict) -> dict:
+    return {k: v for k, v in job.items() if k != "cancel_requested"}
+
+
+def run_job(job: dict, fn):
+    """Runs fn(job) in a background thread; fn should mutate job['done'] as it
+    progresses and check job['cancel_requested'] to stop early."""
+
+    def runner():
+        try:
+            fn(job)
+            if job["status"] == "running":
+                job["status"] = "cancelled" if job["cancel_requested"] else "done"
+        except Exception as e:  # noqa: BLE001 - surface any failure to the client
+            job["status"] = "error"
+            job["error"] = str(e)
+        finally:
+            job["finished_at"] = datetime.utcnow().isoformat()
+
+    threading.Thread(target=runner, daemon=True).start()
+
+
+@app.get("/jobs/{job_id}")
+def get_job_status(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job_public(job)
+
+
+@app.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job["cancel_requested"] = True
+    return job_public(job)
+
+
+@app.get("/jobs")
+def list_jobs(active: bool = False):
+    with _jobs_lock:
+        jobs = list(_jobs.values())
+    jobs.sort(key=lambda j: j["created_at"], reverse=True)
+    if active:
+        jobs = [j for j in jobs if j["status"] == "running"]
+    return {"jobs": [job_public(j) for j in jobs[:50]]}
+
+
 def atomic_write_json(path: Path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(
@@ -697,6 +779,71 @@ def split_imports(payload: dict):
     }
 
 
+def _delete_batch_job(job: dict, db_batch_id: int, batch_dir: Path):
+    """Bulk-deletes a batch's DB rows, then removes its directory tree —
+    reported as a job since both steps can be slow for large batches."""
+    db = SessionLocal()
+    try:
+        batch = db.query(DbBatch).get(db_batch_id)
+        if not batch:
+            job["status"] = "error"
+            job["error"] = "Batch not found"
+            return
+        # Column-only query — deliberately avoids touching batch.images (the
+        # ORM relationship). Loading it would attach those Image objects to
+        # the session as tracked children; the bulk .delete() below removes
+        # their rows without updating the session's identity map, and the
+        # later db.delete(batch) would then try to cascade-null their FK via
+        # an UPDATE that matches 0 rows (StaleDataError) since they're
+        # already gone from the DB.
+        image_ids = [
+            row[0]
+            for row in db.query(DbImage.id).filter(DbImage.batch_id == db_batch_id).all()
+        ]
+        job["total"] = len(image_ids) + 1  # +1 for the final rmtree step
+        if image_ids:
+            db.query(DbDatasetImage).filter(
+                DbDatasetImage.image_id.in_(image_ids)
+            ).delete(synchronize_session=False)
+            db.query(DbAnnotation).filter(
+                DbAnnotation.image_id.in_(image_ids)
+            ).delete(synchronize_session=False)
+            db.query(DbImage).filter(DbImage.id.in_(image_ids)).delete(
+                synchronize_session=False
+            )
+        db.delete(batch)
+        db.commit()
+        job["done"] = len(image_ids)
+    finally:
+        db.close()
+
+    if batch_dir.is_dir():
+        shutil.rmtree(batch_dir)
+    job["done"] = job["total"]
+
+
+@app.delete("/batches/by-id/{id}")
+def delete_batch_by_id(id: int):
+    db = SessionLocal()
+    try:
+        batch = db.query(DbBatch).get(id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        batch_dir = (RAW_IMAGES_DIR / batch.name).resolve()
+        if not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid batch path")
+        image_count = len(batch.images)
+    finally:
+        db.close()
+
+    job = create_job("delete_batch", total=image_count + 1, detail={"batch_id": id})
+    run_job(job, lambda j: _delete_batch_job(j, id, batch_dir))
+    return {"job_id": job["id"], "total": job["total"]}
+
+
+# NOTE: must be registered after /batches/by-id/{id} — {name:path} is greedy
+# and would otherwise swallow "by-id/123" as a literal batch name, shadowing
+# the route above for every request.
 @app.delete("/batches/{name:path}")
 def delete_batch(name: str):
     name = unquote(name)
@@ -716,49 +863,163 @@ def delete_batch(name: str):
         db_batch = db.query(DbBatch).filter_by(name=batch_name).first()
         if not db_batch and not batch_dir.is_dir():
             raise HTTPException(status_code=404, detail="Batch not found")
-
-        if db_batch:
-            for img in list(db_batch.images):
-                db.query(DbDatasetImage).filter_by(image_id=img.id).delete()
-                db.query(DbAnnotation).filter_by(image_id=img.id).delete()
-                db.delete(img)
-            db.delete(db_batch)
-            db.commit()
-
-        if batch_dir.is_dir():
-            shutil.rmtree(batch_dir)
+        db_batch_id = db_batch.id if db_batch else None
+        image_count = len(db_batch.images) if db_batch else 0
     finally:
         db.close()
 
-    return {"deleted": name}
+    if db_batch_id is None:
+        # No DB row — just the orphaned directory. Fast path, no job needed.
+        if batch_dir.is_dir():
+            shutil.rmtree(batch_dir)
+        return {"deleted": name}
+
+    job = create_job("delete_batch", total=image_count + 1, detail={"batch": name})
+    run_job(job, lambda j: _delete_batch_job(j, db_batch_id, batch_dir))
+    return {"job_id": job["id"], "total": job["total"]}
 
 
-@app.delete("/batches/by-id/{id}")
-def delete_batch_by_id(id: int):
+def _split_batch_job(
+    job: dict,
+    batch_id: int,
+    new_names: list[str],
+    chunk_size: int,
+    old_batch_dir: Path,
+):
     db = SessionLocal()
     try:
-        batch = db.query(DbBatch).get(id)
+        batch = db.query(DbBatch).get(batch_id)
+        if not batch:
+            job["status"] = "error"
+            job["error"] = "Batch not found"
+            return
+
+        image_rows = (
+            db.query(DbImage)
+            .filter(DbImage.batch_id == batch_id)
+            .order_by(DbImage.path)
+            .all()
+        )
+
+        # Create the new batch rows + directories up front.
+        new_batches = []
+        for new_name in new_names:
+            new_batch = DbBatch(
+                name=new_name,
+                type=batch.type,
+                source=batch.source,
+                source_id=batch.source_id,
+            )
+            db.add(new_batch)
+            db.flush()
+            (RAW_IMAGES_DIR / new_name).mkdir(parents=True, exist_ok=True)
+            new_batches.append(new_batch)
+        db.commit()
+
+        uploads_root = UPLOADS_DIR.resolve()
+        COMMIT_EVERY = 50
+        for i, img in enumerate(image_rows):
+            if job["cancel_requested"]:
+                break
+            part_index = i // chunk_size
+            new_batch = new_batches[part_index]
+            src = (UPLOADS_DIR / img.path.removeprefix("/uploads/")).resolve()
+            if not src.is_relative_to(uploads_root) or not src.is_file():
+                job["done"] += 1
+                continue
+            dest = RAW_IMAGES_DIR / new_batch.name / img.filename
+            shutil.move(str(src), dest)
+            new_path = f"/uploads/raw-images/{new_batch.name}/{img.filename}"
+            img.path = new_path
+            img.batch_id = new_batch.id
+            if not new_batch.cover:
+                new_batch.cover = new_path
+            job["done"] += 1
+            if job["done"] % COMMIT_EVERY == 0:
+                db.commit()
+        db.commit()
+
+        # Only remove the original batch/dir once every image has actually
+        # moved out — if cancelled partway, whatever wasn't moved yet stays
+        # safely in the original batch instead of being lost.
+        remaining = db.query(DbImage).filter(DbImage.batch_id == batch_id).count()
+        if remaining == 0:
+            db.delete(batch)
+            db.commit()
+            if old_batch_dir.is_dir():
+                shutil.rmtree(old_batch_dir, ignore_errors=True)
+    finally:
+        db.close()
+
+
+@app.post("/batches/{name:path}/split")
+def split_batch(name: str, payload: dict = Body(default={})):
+    name = unquote(name)
+    parts = [p for p in name.split("/") if p]
+    if not parts:
+        raise HTTPException(status_code=400, detail="Invalid batch name")
+    batch_name = parts[-1]
+
+    try:
+        chunk_size = int(payload.get("chunk_size"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="chunk_size must be a number")
+    if chunk_size < 1:
+        raise HTTPException(status_code=400, detail="chunk_size must be at least 1")
+
+    db = SessionLocal()
+    try:
+        batch = db.query(DbBatch).filter_by(name=batch_name).first()
         if not batch:
             raise HTTPException(status_code=404, detail="Batch not found")
 
-        for img in list(batch.images):
-            db.query(DbDatasetImage).filter_by(image_id=img.id).delete()
-            db.query(DbAnnotation).filter_by(image_id=img.id).delete()
-            db.delete(img)
+        attached = (
+            db.query(DbDatasetImage).filter_by(batch_id=batch.id).count()
+        )
+        if attached > 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Batch is attached to a dataset — detach it before splitting",
+            )
 
-        batch_dir = (RAW_IMAGES_DIR / batch.name).resolve()
-        if not batch_dir.is_relative_to(UPLOADS_DIR.resolve()):
-            raise HTTPException(status_code=400, detail="Invalid batch path")
+        total = db.query(DbImage).filter(DbImage.batch_id == batch.id).count()
+        if total == 0:
+            raise HTTPException(status_code=400, detail="Batch has no images")
+        if chunk_size >= total:
+            raise HTTPException(
+                status_code=400,
+                detail="chunk_size must be smaller than the batch's image count",
+            )
 
-        db.delete(batch)
-        db.commit()
+        num_parts = -(-total // chunk_size)  # ceil division
+        pad = max(2, len(str(num_parts)))
+        new_names = [f"{batch_name}-{i + 1:0{pad}d}" for i in range(num_parts)]
 
-        if batch_dir.is_dir():
-            shutil.rmtree(batch_dir)
+        existing = {
+            b.name
+            for b in db.query(DbBatch).filter(DbBatch.name.in_(new_names)).all()
+        }
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Batch name already exists: {', '.join(sorted(existing))}",
+            )
+
+        batch_id = batch.id
+        old_batch_dir = (RAW_IMAGES_DIR / batch_name).resolve()
     finally:
         db.close()
 
-    return {"deleted": id}
+    job = create_job(
+        "split_batch",
+        total=total,
+        detail={"batch": batch_name, "parts": new_names, "chunk_size": chunk_size},
+    )
+    run_job(
+        job,
+        lambda j: _split_batch_job(j, batch_id, new_names, chunk_size, old_batch_dir),
+    )
+    return {"job_id": job["id"], "total": job["total"], "parts": new_names}
 
 
 def _dataset_summary(name: str, entry: dict):
@@ -1326,13 +1587,9 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
             db.close()
 
     write_values = payload.get("write_values", True)
+    user_name = (payload.get("user") or "").strip() or "system"
+    batch_label = payload.get("batch") or None
 
-    # Only images actually processed by this run get written. Do NOT reuse the
-    # full dataset-wide load_annotations() dict here — passing it to
-    # save_annotations/save_prelabels would re-write every batch's rows
-    # (bumping updated_at/updated_by) even though their content is unchanged.
-    processed = {}
-    count = 0
     is_siglip2_checkpoint = (model_dir / "best.pt").exists() or (model_dir / "last.pt").exists()
     if is_siglip2_checkpoint:
         import siglip2_infer
@@ -1346,6 +1603,11 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
     else:
         model_parts = _create_prelabel_predictor(model_dir)
         predict_fn = lambda img_path: _prelabel_image(img_path, model_parts)
+
+    # Resolve the target image list up front (fast query) so the job can
+    # report a real total immediately, without blocking the request on the
+    # (potentially very slow) per-image inference loop below.
+    image_rows: list[tuple[int, str]] = []
     db = SessionLocal()
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
@@ -1357,47 +1619,65 @@ def prelabel_dataset(name: str, payload: dict = Body(default={})):
             )
             if target_batch_id is not None:
                 query = query.filter(DbImage.batch_id == target_batch_id)
-            for db_image in query.all():
-                img_path = (
-                    UPLOADS_DIR / db_image.path.removeprefix("/uploads/")
-                ).resolve()
-                if (
-                    not img_path.is_file()
-                    or not img_path.is_relative_to(UPLOADS_DIR.resolve())
-                ):
-                    continue
-                values = predict_fn(img_path)
-                processed[db_image.path] = values
-                count += 1
+            image_rows = [(img.id, img.path) for img in query.all()]
     finally:
         db.close()
 
-    if write_values:
-        save_annotations(dir_name, processed)
-    save_prelabels(dir_name, processed)
+    job = create_job(
+        "prelabel",
+        total=len(image_rows),
+        detail={"dataset": name, "batch": batch_label, "write_values": write_values},
+    )
 
-    user_name = (payload.get("user") or "").strip() or "system"
-    db = SessionLocal()
-    try:
-        db_dataset = db.query(DbDataset).filter_by(name=name).first()
-        log_activity(
-            db,
-            user_name,
-            "prelabel",
-            dataset_id=db_dataset.id if db_dataset else None,
-            dataset_name=name,
-            detail={"batch": payload.get("batch") or None, "images": count, "write_values": write_values},
-        )
-        db.commit()
-    finally:
-        db.close()
+    # Checkpoint writes every CHUNK images instead of accumulating everything
+    # in memory until the very end — if the job is cancelled (or the server
+    # dies) mid-run, only the last partial chunk is lost, not the whole run.
+    CHUNK = 50
 
-    return {
-        "dataset": name,
-        "batch": payload.get("batch") or None,
-        "images": count,
-        "write_values": write_values,
-    }
+    def task(job):
+        chunk: dict[str, list[int]] = {}
+        processed_count = 0
+        for _img_id, img_path_str in image_rows:
+            if job["cancel_requested"]:
+                break
+            img_path = (UPLOADS_DIR / img_path_str.removeprefix("/uploads/")).resolve()
+            if img_path.is_file() and img_path.is_relative_to(UPLOADS_DIR.resolve()):
+                chunk[img_path_str] = predict_fn(img_path)
+                processed_count += 1
+            job["done"] += 1
+            if len(chunk) >= CHUNK:
+                if write_values:
+                    save_annotations(dir_name, chunk)
+                save_prelabels(dir_name, chunk)
+                chunk = {}
+        if chunk:
+            if write_values:
+                save_annotations(dir_name, chunk)
+            save_prelabels(dir_name, chunk)
+
+        job["detail"]["images"] = processed_count
+        db2 = SessionLocal()
+        try:
+            db_dataset2 = db2.query(DbDataset).filter_by(name=name).first()
+            log_activity(
+                db2,
+                user_name,
+                "prelabel",
+                dataset_id=db_dataset2.id if db_dataset2 else None,
+                dataset_name=name,
+                detail={
+                    "batch": batch_label,
+                    "images": processed_count,
+                    "write_values": write_values,
+                    "cancelled": job["cancel_requested"],
+                },
+            )
+            db2.commit()
+        finally:
+            db2.close()
+
+    run_job(job, task)
+    return {"job_id": job["id"], "total": job["total"]}
 
 
 @app.post("/datasets/{name:path}/images/remove")
@@ -3814,15 +4094,11 @@ def list_images(
         db.close()
 
 
-@app.post("/images/delete")
-def delete_images(payload: dict):
+def _delete_images_job(job: dict, ids: list[int] | None, paths: list[str] | None):
     db = SessionLocal()
     try:
         rows = []
-        ids = payload.get("ids")
-        paths = payload.get("paths")
         if ids:
-            ids = [int(i) for i in ids]
             rows = db.query(DbImage).filter(DbImage.id.in_(ids)).all()
         elif paths:
             rows = db.query(DbImage).filter(DbImage.path.in_(paths)).all()
@@ -3830,44 +4106,44 @@ def delete_images(payload: dict):
         uploads_root = UPLOADS_DIR.resolve()
         deleted = []
         for img in rows:
+            if job["cancel_requested"]:
+                break
             path = img.path
             rel = path.removeprefix("/uploads/")
             target = (UPLOADS_DIR / rel).resolve()
-            if not target.is_relative_to(uploads_root):
-                continue
-            if target.is_file():
-                target.unlink()
-            deleted.append(path)
-            batch = img.batch
-            db.query(DbDatasetImage).filter_by(image_id=img.id).delete()
-            db.query(DbAnnotation).filter_by(image_id=img.id).delete()
-            db.delete(img)
-            db.flush()
-            remaining = (
-                db.query(DbImage)
-                .filter(DbImage.batch_id == batch.id)
-                .count()
-            )
-            if remaining == 0:
-                db.delete(batch)
-            elif batch.cover == path:
-                new_cover = (
-                    db.query(DbImage)
-                    .filter(DbImage.batch_id == batch.id)
-                    .first()
+            if target.is_relative_to(uploads_root):
+                if target.is_file():
+                    target.unlink()
+                deleted.append(path)
+                batch = img.batch
+                db.query(DbDatasetImage).filter_by(image_id=img.id).delete()
+                db.query(DbAnnotation).filter_by(image_id=img.id).delete()
+                db.delete(img)
+                db.flush()
+                remaining = (
+                    db.query(DbImage).filter(DbImage.batch_id == batch.id).count()
                 )
-                batch.cover = new_cover.path if new_cover else None
+                if remaining == 0:
+                    db.delete(batch)
+                elif batch.cover == path:
+                    new_cover = (
+                        db.query(DbImage)
+                        .filter(DbImage.batch_id == batch.id)
+                        .first()
+                    )
+                    batch.cover = new_cover.path if new_cover else None
+            job["done"] += 1
 
         # Remove any files that were passed by path but not in the database
         if paths and not ids:
             for path in paths:
+                if job["cancel_requested"]:
+                    break
                 if path in deleted:
                     continue
                 rel = path.removeprefix("/uploads/")
                 target = (UPLOADS_DIR / rel).resolve()
-                if not target.is_relative_to(uploads_root):
-                    continue
-                if target.is_file():
+                if target.is_relative_to(uploads_root) and target.is_file():
                     target.unlink()
                     deleted.append(path)
 
@@ -3893,4 +4169,18 @@ def delete_images(payload: dict):
                 if changed:
                     save_annotations(dir_name, annotations, updated_by=None)
 
-    return {"deleted": len(deleted)}
+    job["detail"]["deleted"] = len(deleted)
+
+
+@app.post("/images/delete")
+def delete_images(payload: dict):
+    ids = payload.get("ids")
+    paths = payload.get("paths")
+    ids = [int(i) for i in ids] if ids else None
+    total = len(ids) if ids else len(paths or [])
+    if total == 0:
+        return {"deleted": 0}
+
+    job = create_job("delete_images", total=total)
+    run_job(job, lambda j: _delete_images_job(j, ids, paths))
+    return {"job_id": job["id"], "total": job["total"]}

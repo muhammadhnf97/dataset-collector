@@ -10,7 +10,7 @@ import {
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAppData } from './AppDataContext'
 import { useUser } from './UserContext'
-import { useLocalStorage } from '../utils'
+import { pollJob, useLocalStorage } from '../utils'
 
 // Everything scoped to the dataset workspace (/datasets/:name): the active
 // dataset, its batches/images/annotations, selection + marquee state, the
@@ -91,6 +91,8 @@ export function DatasetProvider({ children }) {
   const [importBatchOpen, setImportBatchOpen] = useState(false)
   const [importingBatch, setImportingBatch] = useState(false)
   const [preLabeling, setPreLabeling] = useState(false)
+  const [prelabelProgress, setPrelabelProgress] = useState(null) // {done,total} | null
+  const prelabelJobIdRef = useRef(null)
   const [prelabelConfirmOpen, setPrelabelConfirmOpen] = useState(false)
   const [prelabelConfirmCount, setPrelabelConfirmCount] = useState(0)
   const [prelabelWriteValues, setPrelabelWriteValues] = useState(true)
@@ -1088,6 +1090,7 @@ export function DatasetProvider({ children }) {
     if (!activeDataset) return
     setPrelabelConfirmOpen(false)
     setPreLabeling(true)
+    setPrelabelProgress({ done: 0, total: 0 })
     try {
       const response = await fetch(
         `/api/datasets/${encodeURIComponent(activeDataset)}/prelabel`,
@@ -1107,16 +1110,41 @@ export function DatasetProvider({ children }) {
         setStatus(`Failed: ${data.detail ?? 'Unknown error'}`)
         return
       }
-      setStatus(
-        writeValues
-          ? `Pre-labeled ${data.images} images`
-          : `Pre-labeled ${data.images} images (predictions only, values untouched)`,
-      )
+      prelabelJobIdRef.current = data.job_id
+      setPrelabelProgress({ done: 0, total: data.total ?? 0 })
+      setStatus(`Pre-labeling started — 0 / ${data.total ?? 0} images`)
+      const job = await pollJob(data.job_id, {
+        onProgress: (j) => setPrelabelProgress({ done: j.done, total: j.total }),
+      })
+      if (job.status === 'error') {
+        setStatus(`Failed: ${job.error ?? 'Pre-label job failed'}`)
+      } else if (job.status === 'cancelled') {
+        setStatus(`Cancelled — pre-labeled ${job.done} images before stopping`)
+      } else {
+        const count = job.detail?.images ?? job.done
+        setStatus(
+          writeValues
+            ? `Pre-labeled ${count} images`
+            : `Pre-labeled ${count} images (predictions only, values untouched)`,
+        )
+      }
       refreshDataset(activeDataset)
     } catch {
       setStatus('Failed: could not reach the server')
     } finally {
       setPreLabeling(false)
+      setPrelabelProgress(null)
+      prelabelJobIdRef.current = null
+    }
+  }
+
+  const cancelPrelabel = async () => {
+    if (!prelabelJobIdRef.current) return
+    setStatus('Cancelling pre-label...')
+    try {
+      await fetch(`/api/jobs/${prelabelJobIdRef.current}/cancel`, { method: 'POST' })
+    } catch {
+      // polling loop will still pick up the eventual status
     }
   }
 
@@ -1477,6 +1505,8 @@ export function DatasetProvider({ children }) {
     doArchiveDataset,
     runPrelabel,
     doPrelabel,
+    prelabelProgress,
+    cancelPrelabel,
     fetchActivity,
     fetchPrelabelStats,
   }

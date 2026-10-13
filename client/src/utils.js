@@ -51,6 +51,21 @@ export const mergeReviewerMaps = (...maps) => {
 export const sortedReviewers = (merged) =>
   Object.entries(merged).sort((a, b) => (b[1] ?? '').localeCompare(a[1] ?? ''))
 
+// Polls a background job (see server /jobs/{id}) until it leaves the
+// "running" state, reporting progress along the way so long operations
+// (prelabel, batch delete) never leave the user guessing whether anything is
+// happening.
+export async function pollJob(jobId, { onProgress, intervalMs = 700 } = {}) {
+  for (;;) {
+    const response = await fetch(`/api/jobs/${jobId}`)
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail ?? 'Job not found')
+    onProgress?.(data)
+    if (data.status !== 'running') return data
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+}
+
 export const DATASET_PAGE_LIMIT = 200
 
 // Literal class strings required — Tailwind can't see dynamically built names.

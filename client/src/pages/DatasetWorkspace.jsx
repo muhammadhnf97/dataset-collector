@@ -88,6 +88,8 @@ export default function DatasetWorkspace() {
     setImportBatchOpen,
     importingBatch,
     preLabeling,
+    prelabelProgress,
+    cancelPrelabel,
     prelabelConfirmOpen,
     setPrelabelConfirmOpen,
     prelabelConfirmCount,
@@ -639,16 +641,45 @@ export default function DatasetWorkspace() {
             <div className="h-5 w-px bg-slate-300" />
             <div className="ml-auto flex items-center gap-2">
               <div ref={prelabelMenuRef} className="relative">
-                <div className="flex overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
-                  <button
-                    type="button"
-                    onClick={() => doPrelabel(true)}
-                    disabled={!templatePath || preLabeling}
-                    title="Runs the model and overwrites both the corrected value and the pre-label prediction"
-                    className="px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
-                  >
-                    {preLabeling ? 'Pre-labeling...' : 'Pre-label'}
-                  </button>
+                <div className="flex items-center overflow-hidden rounded-full border border-indigo-300 bg-indigo-50">
+                  {preLabeling && prelabelProgress ? (
+                    <div className="flex items-center gap-2 px-3 py-1">
+                      <span className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
+                      <span className="text-xs font-medium text-indigo-700">
+                        {prelabelProgress.total > 0
+                          ? `${prelabelProgress.done} / ${prelabelProgress.total}`
+                          : 'Starting...'}
+                      </span>
+                      {prelabelProgress.total > 0 && (
+                        <span className="block h-1 w-16 overflow-hidden rounded-full bg-indigo-200">
+                          <span
+                            className="block h-full rounded-full bg-indigo-600 transition-all"
+                            style={{
+                              width: `${Math.min(100, (prelabelProgress.done / prelabelProgress.total) * 100)}%`,
+                            }}
+                          />
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={cancelPrelabel}
+                        title="Cancel pre-labeling"
+                        className="text-xs font-medium text-rose-600 hover:text-rose-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => doPrelabel(true)}
+                      disabled={!templatePath || preLabeling}
+                      title="Runs the model and overwrites both the corrected value and the pre-label prediction"
+                      className="px-3 py-1 text-xs font-medium text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-40"
+                    >
+                      Pre-label
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setPrelabelMenuOpen((v) => !v)}
