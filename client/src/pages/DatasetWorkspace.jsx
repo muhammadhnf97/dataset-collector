@@ -1002,7 +1002,7 @@ export default function DatasetWorkspace() {
 
       {attrAnnotate && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm px-6 py-4">
-          <div className="relative flex w-full max-w-5xl flex-1 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-2xl backdrop-blur-sm">
+          <div className="relative flex w-full max-w-7xl flex-1 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/90 shadow-2xl backdrop-blur-sm">
             <div className="flex items-center justify-between border-b border-slate-200 bg-slate-100/80 px-4 py-3">
               <div className="flex items-center gap-3">
                 {attrAnnotate.returnToViewer && (
@@ -1163,6 +1163,114 @@ export default function DatasetWorkspace() {
             )}
 
             <div className="flex flex-1 overflow-hidden">
+              <div className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-slate-100/90 p-3 text-xs">
+                <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                  All attributes
+                </p>
+                {attrAnnotate.images[attrAnnotate.imgIndex] &&
+                  (() => {
+                    const image = attrAnnotate.images[attrAnnotate.imgIndex]
+                    const values = attrAnnotate.annotations[image]
+                    const attrReview = datasetReviewed[image] ?? {}
+                    const reviewersFor = (gi) =>
+                      sortedReviewers(
+                        mergeReviewerMaps(attrReview[String(gi)], attrReview.all),
+                      )
+                    const anyReviewers = sortedReviewers(
+                      mergeReviewerMaps(...Object.values(attrReview)),
+                    )
+                    return (
+                      <>
+                        {!values && (
+                          <p className="flex items-center gap-1.5 py-1 text-slate-400">
+                            <span className="inline-block h-2 w-2 rounded-full bg-red-400" />
+                            Not annotated
+                          </p>
+                        )}
+                        {attrAnnotate.attributes.map((group, gi) => {
+                          const selected = (group.options ?? [])
+                            .map((opt, i) => group.option_aliases?.[i] ?? opt)
+                            .filter((_, i) => values?.[group.indices[i]] === 1)
+                          const hasValue = selected.length > 0
+                          const rowReviewers = reviewersFor(gi)
+                          const isActive = gi === attrAnnotate.attrIndex
+                          return (
+                            <div
+                              key={group.name}
+                              onClick={
+                                isActive
+                                  ? undefined
+                                  : () =>
+                                      setAttrAnnotate((s) => ({
+                                        ...s,
+                                        attrIndex: gi,
+                                      }))
+                              }
+                              className={`flex items-center gap-1.5 py-0.5 leading-relaxed ${
+                                isActive
+                                  ? '-mx-1 rounded bg-indigo-100/70 px-1'
+                                  : '-mx-1 cursor-pointer rounded px-1 transition hover:bg-slate-200/70'
+                              }`}
+                              title={
+                                isActive
+                                  ? undefined
+                                  : `Switch to ${group.alias ?? group.name}`
+                              }
+                            >
+                              <span
+                                className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                                  hasValue ? 'bg-emerald-500' : 'bg-red-400'
+                                }`}
+                              />
+                              <span
+                                className={`font-semibold ${
+                                  isActive ? 'text-indigo-600' : 'text-slate-500'
+                                }`}
+                              >
+                                {group.alias ?? group.name}
+                              </span>{' '}
+                              <span
+                                className={`font-medium ${
+                                  hasValue
+                                    ? isActive
+                                      ? 'text-indigo-800'
+                                      : 'text-slate-800'
+                                    : 'text-slate-400'
+                                }`}
+                              >
+                                {hasValue ? selected.join(', ') : '—'}
+                              </span>
+                              {rowReviewers.length > 0 && (
+                                <span
+                                  className="ml-auto shrink-0 text-[10px] font-normal text-slate-400"
+                                  title={rowReviewers
+                                    .map(
+                                      ([u, at]) =>
+                                        `${u} · ${formatRelativeTime(at)}`,
+                                    )
+                                    .join('\n')}
+                                >
+                                  {rowReviewers.map(([u]) => u).join(', ')}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })}
+                        {!values && anyReviewers.length > 0 && (
+                          <p className="py-0.5 text-[10px] text-slate-400">
+                            Reviewed by{' '}
+                            {anyReviewers
+                              .map(
+                                ([u, at]) => `${u} · ${formatRelativeTime(at)}`,
+                              )
+                              .join(', ')}
+                          </p>
+                        )}
+                      </>
+                    )
+                  })()}
+              </div>
+
               <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-slate-100/80 p-2">
                 {attrAnnotate.images[attrAnnotate.imgIndex] ? (
                   <img
@@ -1175,7 +1283,7 @@ export default function DatasetWorkspace() {
                 )}
               </div>
 
-              <div className="flex w-80 flex-col border-l border-slate-200 bg-slate-100/90 p-4">
+              <div className="flex w-80 flex-col overflow-y-auto border-l border-slate-200 bg-slate-100/90 p-4">
                 {(() => {
                   const group = attrAnnotate.attributes[attrAnnotate.attrIndex]
                   const image = attrAnnotate.images[attrAnnotate.imgIndex]
