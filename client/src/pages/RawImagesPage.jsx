@@ -57,6 +57,11 @@ export default function RawImagesPage() {
   const [splitProgress, setSplitProgress] = useState(null)
   const [tagsMenuOpen, setTagsMenuOpen] = useState(false)
   const tagsMenuRef = useRef(null)
+  // marquee (drag) selection — same mechanics as the dataset grid
+  const rawGridRef = useRef(null)
+  const rawMarqueeRef = useRef(null) // {sx, sy, cards, didDrag, hits} in page coords
+  const suppressRawClickRef = useRef(false)
+  const [rawMarqueeRect, setRawMarqueeRect] = useState(null)
   const [sourceModalOpen, setSourceModalOpen] = useState(false)
   const [uploadSourceId, setUploadSourceId] = useState('')
   const [uploadSourceOpen, setUploadSourceOpen] = useState(false)
@@ -179,6 +184,96 @@ export default function RawImagesPage() {
       next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
+  }
+
+  const onRawGridPointerDown = (e) => {
+    if (!rawImageSelectMode || e.button !== 0) return
+    // let real buttons (sentinel, etc.) work normally — image cards are
+    // <button data-img-id> and stay marquee-capable
+    if (e.target.closest('button:not([data-img-id])')) return
+    const sx = e.clientX + window.scrollX
+    const sy = e.clientY + window.scrollY
+    const cards = [
+      ...rawGridRef.current.querySelectorAll('[data-img-id]'),
+    ].map((el) => {
+      const r = el.getBoundingClientRect()
+      return {
+        el,
+        id: el.dataset.imgId,
+        l: r.left + window.scrollX,
+        t: r.top + window.scrollY,
+        r: r.right + window.scrollX,
+        b: r.bottom + window.scrollY,
+      }
+    })
+    rawMarqueeRef.current = { sx, sy, cards, didDrag: false, hits: new Set() }
+    window.addEventListener('pointermove', onRawGridPointerMove)
+    window.addEventListener('pointerup', onRawGridPointerUp, { once: true })
+    window.addEventListener('pointercancel', onRawGridPointerUp, { once: true })
+  }
+
+  const onRawGridPointerMove = (e) => {
+    const st = rawMarqueeRef.current
+    if (!st) return
+    const cx = e.clientX + window.scrollX
+    const cy = e.clientY + window.scrollY
+    if (!st.didDrag && Math.hypot(cx - st.sx, cy - st.sy) < 5) return
+    st.didDrag = true
+    const l = Math.min(st.sx, cx)
+    const t = Math.min(st.sy, cy)
+    const r = Math.max(st.sx, cx)
+    const b = Math.max(st.sy, cy)
+    const cr = rawGridRef.current.getBoundingClientRect()
+    setRawMarqueeRect({
+      left: l - (cr.left + window.scrollX),
+      top: t - (cr.top + window.scrollY),
+      width: r - l,
+      height: b - t,
+    })
+    for (const c of st.cards) {
+      const hit = c.l < r && c.r > l && c.t < b && c.b > t
+      if (hit && !st.hits.has(c.id)) {
+        st.hits.add(c.id)
+        c.el.style.outline = '2px solid #818cf8'
+        c.el.style.outlineOffset = '-2px'
+      } else if (!hit && st.hits.has(c.id)) {
+        st.hits.delete(c.id)
+        c.el.style.outline = ''
+      }
+    }
+  }
+
+  const onRawGridPointerUp = () => {
+    window.removeEventListener('pointermove', onRawGridPointerMove)
+    window.removeEventListener('pointercancel', onRawGridPointerUp)
+    const st = rawMarqueeRef.current
+    rawMarqueeRef.current = null
+    setRawMarqueeRect(null)
+    if (!st) return
+    for (const c of st.cards) c.el.style.outline = ''
+    if (!st.didDrag) return
+    // eat the click that follows this same gesture, but only that one
+    suppressRawClickRef.current = true
+    setTimeout(() => {
+      suppressRawClickRef.current = false
+    }, 0)
+    if (st.hits.size) {
+      setSelectedRawImageIds((prev) => {
+        const next = new Set(prev)
+        for (const id of st.hits) {
+          const n = Number(id)
+          next.add(Number.isNaN(n) ? id : n)
+        }
+        return next
+      })
+    }
+  }
+
+  const onRawGridClickCapture = (e) => {
+    if (suppressRawClickRef.current) {
+      e.stopPropagation()
+      e.preventDefault()
+    }
   }
 
   const doDeleteSelectedRawImages = async () => {
@@ -839,6 +934,19 @@ export default function RawImagesPage() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
+            <div
+              ref={rawGridRef}
+              className={`relative ${rawImageSelectMode ? 'select-none' : ''}`}
+              onPointerDown={onRawGridPointerDown}
+              onClickCapture={onRawGridClickCapture}
+              onDragStart={(e) => e.preventDefault()}
+            >
+            {rawMarqueeRect && (
+              <div
+                className="pointer-events-none absolute z-20 rounded border-2 border-indigo-400 bg-indigo-400/15"
+                style={rawMarqueeRect}
+              />
+            )}
             {rawImagesLoading && activeImages.length === 0 ? (
               <div className="mt-4">
                 <SkeletonGrid
@@ -855,6 +963,7 @@ export default function RawImagesPage() {
                   <button
                     key={image.id ?? image}
                     type="button"
+                    data-img-id={image.id}
                     onClick={() =>
                       rawImageSelectMode
                         ? toggleRawImageSelect(image.id)
@@ -891,6 +1000,7 @@ export default function RawImagesPage() {
                   <button
                     key={image.id ?? image}
                     type="button"
+                    data-img-id={image.id}
                     onClick={() =>
                       rawImageSelectMode
                         ? toggleRawImageSelect(image.id)
@@ -951,6 +1061,7 @@ export default function RawImagesPage() {
                   : `${activeImages.length} / ${rawImagesTotal} — scroll for more`}
               </div>
             )}
+            </div>
             </div>
           </>
         )}
