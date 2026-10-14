@@ -24,15 +24,15 @@ attributes:
   - name: Upper
     alias: Atasan
     type: single
-    indices: [9, 10, 11, 12, 13, 14, 15, 16, 17]
-    options: [TShirt, Shirt, Polo, Blouse, Tunic, Sweater, Dress, Other, Unknown]
-    option_aliases: ['Kaos', 'Kemeja', 'Polo', 'Blus', 'Tunik', 'Sweater', 'Dress', 'Lainnya', 'Tidak Terlihat']
+    indices: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+    options: [TShirt, Shirt, Polo, Blouse, Tunic, Sweater, Hoodie, Dress, Other, Unknown]
+    option_aliases: ['Kaos', 'Kemeja', 'Polo', 'Blus', 'Tunik', 'Sweater', 'Hoodie', 'Dress', 'Lainnya', 'Tidak Terlihat']
   - name: Outer
     alias: Luaran
     type: single
-    indices: [18, 19, 20, 21, 22, 23, 24]
-    options: [None, Jacket, Overshirt, Hoodie, Cardigan, Other, Unknown]
-    option_aliases: ['Tidak Ada', 'Jaket', 'Overshirt', 'Hoodie', 'Cardigan', 'Lainnya', 'Tidak Terlihat']
+    indices: [19, 20, 21, 22, 23, 24]
+    options: [None, Jacket, Overshirt, Cardigan, Other, Unknown]
+    option_aliases: ['Tidak Ada', 'Jaket', 'Overshirt', 'Cardigan', 'Lainnya', 'Tidak Terlihat']
   - name: Sleeve
     alias: Lengan
     type: single
