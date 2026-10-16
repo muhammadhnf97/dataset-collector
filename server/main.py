@@ -2150,6 +2150,13 @@ def get_dataset_annotations(name: str):
     try:
         db_dataset = db.query(DbDataset).filter_by(name=name).first()
         if db_dataset:
+            valid_paths = {
+                p
+                for (p,) in db.query(DbImage.path)
+                .join(DbDatasetImage, DbDatasetImage.image_id == DbImage.id)
+                .filter(DbDatasetImage.dataset_id == db_dataset.id)
+                .all()
+            }
             rows = (
                 db.query(
                     DbActivityLog.image_path,
@@ -2167,8 +2174,12 @@ def get_dataset_annotations(name: str):
             )
             # rows are newest-first: first hit per (image, attr, user) is the
             # latest. attr key is str(attr_index); "all" = whole-image action
-            # (e.g. freeform annotate with no focused group).
+            # (e.g. freeform annotate with no focused group). Paths are
+            # historical strings — images removed/moved leave stale rows, so
+            # only paths still in the dataset count as reviewed.
             for path, user, ts, detail in rows:
+                if path not in valid_paths:
+                    continue
                 attr = (detail or {}).get("attr_index")
                 key = "all" if attr is None else str(attr)
                 users = reviewed.setdefault(path, {}).setdefault(key, {})
